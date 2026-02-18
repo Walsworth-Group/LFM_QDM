@@ -1,0 +1,35 @@
+# Claude Code session data
+.claude/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Legacy / outdated code
+Legacy/
+LabView/
+
+# Manuals (PDFs, not needed in version control)
+Manuals/
+
+# Test scripts
+Test scripts/
+
+# Unused notebooks
+Camera ODMR extra.ipynb
+Misc.ipynb
+
+# Windows artifact
+nul
+
+# Data files (raw experimental data lives on E: drive, not here)
+*.npz
+*.npy
+*.csv
+*.h5
+*.hdf5

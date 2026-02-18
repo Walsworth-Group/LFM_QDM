@@ -1,0 +1,15 @@
+{
+  "daq_device": "Dev3",
+  "daq_channel": "ai0",
+  "sample_rate": 2.0,
+  "batch_size": 1,
+  "voltage_range_min": -10.0,
+  "voltage_range_max": 10.0,
+  "conversion_slope": 0.9527,
+  "conversion_intercept": 0.0036,
+  "save_dir": "E:\\MTB project\\CW ODMR",
+  "save_subfolder": "Feb 2026",
+  "auto_save": false,
+  "append_timestamp": true,
+  "max_refresh_rate": 10.0
+}
