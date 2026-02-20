@@ -1764,7 +1764,7 @@ def format_multi_point_frequencies_binned(inflection_points, inflection_slopes, 
 
 def measure_multi_point_binned(sg384, camera, freq_array, slope_array, parity_list,
                                 baseline_array, settling_time, n_frames, ny_full, nx_full,
-                                upsample_order=1):
+                                upsample_order=1, _pbar=None):
     """
     Multi-point measurement with SPATIALLY-VARYING slopes and baseline contrasts.
 
@@ -1876,6 +1876,13 @@ def measure_multi_point_binned(sg384, camera, freq_array, slope_array, parity_li
             for iy in range(ny_bins):
                 for ix in range(nx_bins):
                     freq_scalar = freq_array[i, iy, ix]
+                    if _pbar is not None:
+                        bin_num = iy * nx_bins + ix + 1
+                        _pbar.set_postfix(
+                            pt=f"{i+1}/{n_points}",
+                            bin=f"{bin_num}/{ny_bins*nx_bins}",
+                            freq=f"{freq_scalar:.4f}GHz"
+                        )
                     sg384.set_frequency(freq_scalar, 'GHz')
                     time.sleep(settling_time)
                     camera.flush_buffer()
@@ -2057,18 +2064,21 @@ def run_multi_point_stability_measurement_binned(
             for i in range(num_samples):
                 t0 = time.perf_counter()
 
-                # Binned multi-point measurement (returns frequency shifts in GHz)
+                # Binned multi-point measurement (returns frequency shifts in GHz).
+                # Pass pbar so the inner bin loop can update the postfix with live
+                # bin/frequency info during the (potentially long) per-bin stepping.
                 result = measure_multi_point_binned(
                     sg384, camera, freq_array, slope_array, parity_list,
                     baseline_array, settling_time, n_frames, ny, nx,
-                    upsample_order=upsample_order
+                    upsample_order=upsample_order, _pbar=pbar
                 )
 
                 stability_cube[i, :, :] = result
 
-                # UI Update
+                # UI Update: reset postfix to sample-level summary after each sample
+                elapsed = time.perf_counter() - t0
                 pbar.update(1)
-                pbar.set_postfix(idx=f"{i+1}/{num_samples}", loop=f"{time.perf_counter()-t0:.2f}s")
+                pbar.set_postfix(sample=f"{i+1}/{num_samples}", t=f"{elapsed:.1f}s")
 
     finally:
         # Cleanup
