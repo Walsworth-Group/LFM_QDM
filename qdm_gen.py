@@ -43,9 +43,7 @@ def run_odmr_sweep(
     save_fig=False,
     save_path=None,
     subfolder="",
-    logger=None,
-    fit_tolerance=None,
-    max_iters=None
+    logger=None
 ):
     """
     High-level function to execute a complete ODMR frequency sweep experiment.
@@ -83,12 +81,6 @@ def run_odmr_sweep(
         Subfolder for saving data and figures.
     logger : callable or None
         Optional logging function (e.g., tqdm.write).
-    fit_tolerance : float or None
-        Convergence tolerance (ftol and xtol) for Lorentzian fitting.
-        None uses fit_lorentzians default (1e-8). Only used if auto_analyze=True.
-    max_iters : int or None
-        Maximum function evaluations for Lorentzian fitting.
-        None uses fit_lorentzians default (20000). Only used if auto_analyze=True.
 
     Returns
     -------
@@ -229,9 +221,7 @@ def run_odmr_sweep(
             show_plot=True,
             save_fig=save_fig,
             subfolder=subfolder,
-            title_prefix=f"ODMR Analysis ({num_sweeps} sweeps)",
-            fit_tolerance=fit_tolerance,
-            max_iters=max_iters
+            title_prefix=f"ODMR Analysis ({num_sweeps} sweeps)"
         )
         result['analysis'] = analysis_result['analysis']
         result['peak_params'] = analysis_result['peak_params']
@@ -537,9 +527,7 @@ def identify_multi_transition_inflection_points(
     save_fig=False,
     save_path=None,
     subfolder="",
-    logger=None,
-    fit_tolerance=None,
-    max_iters=None
+    logger=None
 ):
     """
     Identify all inflection points from both NV transitions for multi-point magnetometry.
@@ -581,12 +569,6 @@ def identify_multi_transition_inflection_points(
         Subfolder for saving data and figures.
     logger : callable or None
         Optional logging function.
-    fit_tolerance : float or None
-        Convergence tolerance (ftol and xtol) for Lorentzian fitting.
-        None uses fit_lorentzians default (1e-8).
-    max_iters : int or None
-        Maximum function evaluations for Lorentzian fitting.
-        None uses fit_lorentzians default (20000).
 
     Returns
     -------
@@ -629,9 +611,7 @@ def identify_multi_transition_inflection_points(
         save_fig=save_fig,
         save_path=save_path,
         subfolder=subfolder,
-        logger=logger,
-        fit_tolerance=fit_tolerance,
-        max_iters=max_iters
+        logger=logger
     )
 
     if show_plot and 'analysis_figure' in sweep1_result:
@@ -654,9 +634,7 @@ def identify_multi_transition_inflection_points(
         save_fig=save_fig,
         save_path=save_path,
         subfolder=subfolder,
-        logger=logger,
-        fit_tolerance=fit_tolerance,
-        max_iters=max_iters
+        logger=logger
     )
 
     if show_plot and 'analysis_figure' in sweep2_result:
@@ -1183,7 +1161,7 @@ def identify_multi_transition_inflection_points_binned(
     start_freq1, end_freq1, num_steps1,
     start_freq2, end_freq2, num_steps2,
     ref_freq, num_sweeps, settings,
-    bin_x=None, bin_y=None,
+    bin_x, bin_y,
     simulation_mode=False,
     n_lorentz_per_sweep=2,
     show_plot=True,
@@ -1234,14 +1212,9 @@ def identify_multi_transition_inflection_points_binned(
         Number of sweeps to average per range. Recommend ≥10 for good per-bin SNR.
     settings : dict
         Nested settings dictionary (camera, srs, simulation configs).
-    bin_x, bin_y : int or None
-        Spatial binning (pixels per bin). Default None = global-mean mode.
-        When None, the full camera FOV is treated as a single bin and parameters
-        are read directly from the global mean ODMR fit (same code path as
-        identify_multi_transition_inflection_points). This gives results that are
-        functionally identical to the non-binned pipeline. Returns shape (8, 1, 1)
-        parameter arrays, compatible with all downstream binned functions.
-        Example: bin_x=50, bin_y=50 → 50×50 pixel bins.
+    bin_x, bin_y : int
+        Spatial binning (pixels per bin). Required parameters.
+        Example: bin_x=10, bin_y=10 → 10×10 pixel bins.
     simulation_mode : bool
         If True, generate synthetic data.
     n_lorentz_per_sweep : int
@@ -1313,15 +1286,10 @@ def identify_multi_transition_inflection_points_binned(
     if logger is None:
         logger = print
 
-    global_mode = (bin_x is None or bin_y is None)
-
     logger("\n" + "="*60)
     logger("SPATIALLY-BINNED MULTI-TRANSITION INFLECTION POINT IDENTIFICATION")
     logger("="*60)
-    if global_mode:
-        logger("Mode: GLOBAL-MEAN (bin_x=None / bin_y=None) — parameters from global fit")
-    else:
-        logger(f"Binning: {bin_x}×{bin_y} pixels per bin")
+    logger(f"Binning: {bin_x}×{bin_y} pixels per bin")
     logger(f"Parallel fitting with n_jobs={n_jobs}")
 
     # Generate frequency arrays
@@ -1344,9 +1312,7 @@ def identify_multi_transition_inflection_points_binned(
         save_fig=save_fig,
         save_path=save_path,
         subfolder=subfolder,
-        logger=logger,
-        fit_tolerance=fit_tolerance,
-        max_iters=max_iters
+        logger=logger
     )
 
     if show_plot and 'analysis_figure' in sweep1_result:
@@ -1368,200 +1334,153 @@ def identify_multi_transition_inflection_points_binned(
         save_fig=save_fig,
         save_path=save_path,
         subfolder=subfolder,
-        logger=logger,
-        fit_tolerance=fit_tolerance,
-        max_iters=max_iters
+        logger=logger
     )
 
     if show_plot and 'analysis_figure' in sweep2_result:
         plt.show()
 
     # =========================================================================
-    # PARAMETER EXTRACTION: GLOBAL-MEAN MODE OR PER-BIN FITTING
+    # SPATIAL BINNING AND PER-BIN FITTING
     # =========================================================================
+    logger("\n" + "="*60)
+    logger("PERFORMING PER-BIN ODMR FITTING")
+    logger("="*60)
+
+    # Bin the data cubes
+    odmr_cube_1 = sweep1_result['odmr_data_cube']
+    odmr_cube_2 = sweep2_result['odmr_data_cube']
+
+    binned_cube_1 = bin_qdm_cube(odmr_cube_1, bin_x, bin_y)
+    binned_cube_2 = bin_qdm_cube(odmr_cube_2, bin_x, bin_y)
+
+    n_freq1, ny_bins, nx_bins = binned_cube_1.shape
+    n_freq2 = binned_cube_2.shape[0]
+
+    logger(f"Binned data shape: ({ny_bins}, {nx_bins}) bins")
+    logger(f"Total bins to fit: {ny_bins * nx_bins * 2} ({ny_bins * nx_bins} per sweep)")
+
+    # Setup frequency ranges for fitting
+    scan_width_1 = freqlist1.max() - freqlist1.min()
+    margin_1 = max(0.05 * scan_width_1, 0.001)
+    freq_range_1 = (freqlist1.min() + margin_1, freqlist1.max() - margin_1)
+
+    scan_width_2 = freqlist2.max() - freqlist2.min()
+    margin_2 = max(0.05 * scan_width_2, 0.001)
+    freq_range_2 = (freqlist2.min() + margin_2, freqlist2.max() - margin_2)
+
+    # Prepare bin spectra for parallel fitting
+    def prepare_bin_data(binned_cube, freqlist, freq_range):
+        """Extract all bin spectra and prepare for parallel fitting"""
+        bin_spectra = []
+        bin_coords = []
+        for iy in range(ny_bins):
+            for ix in range(nx_bins):
+                bin_spectra.append(binned_cube[:, iy, ix])
+                bin_coords.append((iy, ix))
+        return bin_spectra, bin_coords
+
+    # Fit all bins for sweep 1
+    logger(f"Fitting sweep 1 bins...")
+    bin_spectra_1, bin_coords_1 = prepare_bin_data(binned_cube_1, freqlist1, freq_range_1)
+
+    fit_results_1 = Parallel(n_jobs=n_jobs, verbose=5)(
+        delayed(_fit_single_bin_odmr)(
+            spectrum, freqlist1, n_lorentz_per_sweep, fit_tolerance, max_iters, freq_range_1
+        )
+        for spectrum in bin_spectra_1
+    )
+
+    # Fit all bins for sweep 2
+    logger(f"Fitting sweep 2 bins...")
+    bin_spectra_2, bin_coords_2 = prepare_bin_data(binned_cube_2, freqlist2, freq_range_2)
+
+    fit_results_2 = Parallel(n_jobs=n_jobs, verbose=5)(
+        delayed(_fit_single_bin_odmr)(
+            spectrum, freqlist2, n_lorentz_per_sweep, fit_tolerance, max_iters, freq_range_2
+        )
+        for spectrum in bin_spectra_2
+    )
+
+    # =========================================================================
+    # ASSEMBLE 3D PARAMETER ARRAYS
+    # =========================================================================
+    logger("\nAssembling 3D parameter arrays...")
 
     # Number of inflection points per sweep (2 per peak × n_lorentz_per_sweep)
     n_infl_per_sweep = 2 * n_lorentz_per_sweep
     n_infl_total = 2 * n_infl_per_sweep  # Total from both sweeps
 
-    if global_mode:
-        # ------------------------------------------------------------------
-        # GLOBAL-MEAN MODE: bypass per-bin fitting entirely.
-        # Read parameters directly from fit_global_odmr results already
-        # computed inside run_odmr_sweep (auto_analyze=True).
-        # Returns shape (n_infl_total, 1, 1) — compatible with all downstream
-        # binned functions; _upsample_parameter_array produces a uniform map.
-        # ------------------------------------------------------------------
-        logger("\n" + "="*60)
-        logger("GLOBAL-MEAN MODE — reading parameters from global ODMR fit")
-        logger("="*60)
+    # Allocate 3D arrays
+    inflection_points_3d = np.full((n_infl_total, ny_bins, nx_bins), np.nan, dtype=np.float32)
+    inflection_slopes_3d = np.full((n_infl_total, ny_bins, nx_bins), np.nan, dtype=np.float32)
+    inflection_contrasts_3d = np.full((n_infl_total, ny_bins, nx_bins), np.nan, dtype=np.float32)
 
-        ny_bins, nx_bins = 1, 1
+    fit_quality_map_1 = np.full((ny_bins, nx_bins), np.nan, dtype=np.float32)
+    fit_quality_map_2 = np.full((ny_bins, nx_bins), np.nan, dtype=np.float32)
 
-        global_peak_params_1 = sweep1_result.get('peak_params', [])
-        global_peak_params_2 = sweep2_result.get('peak_params', [])
+    # Get global mean parameters as fallback for failed bins
+    global_peak_params_1 = sweep1_result.get('peak_params', [])
+    global_peak_params_2 = sweep2_result.get('peak_params', [])
 
-        global_infl_pts_1, global_infl_slopes_1, global_infl_contrasts_1 = [], [], []
-        for peak in global_peak_params_1:
-            global_infl_pts_1.extend(peak['inflection_pts'])
-            global_infl_contrasts_1.extend(peak['inflection_contrasts'])
-            global_infl_slopes_1.append(-peak['max_slope'])
-            global_infl_slopes_1.append(peak['max_slope'])
+    global_infl_pts_1 = []
+    global_infl_slopes_1 = []
+    global_infl_contrasts_1 = []
+    for peak in global_peak_params_1:
+        global_infl_pts_1.extend(peak['inflection_pts'])
+        global_infl_contrasts_1.extend(peak['inflection_contrasts'])
+        global_infl_slopes_1.append(-peak['max_slope'])
+        global_infl_slopes_1.append(peak['max_slope'])
 
-        global_infl_pts_2, global_infl_slopes_2, global_infl_contrasts_2 = [], [], []
-        for peak in global_peak_params_2:
-            global_infl_pts_2.extend(peak['inflection_pts'])
-            global_infl_contrasts_2.extend(peak['inflection_contrasts'])
-            global_infl_slopes_2.append(-peak['max_slope'])
-            global_infl_slopes_2.append(peak['max_slope'])
+    global_infl_pts_2 = []
+    global_infl_slopes_2 = []
+    global_infl_contrasts_2 = []
+    for peak in global_peak_params_2:
+        global_infl_pts_2.extend(peak['inflection_pts'])
+        global_infl_contrasts_2.extend(peak['inflection_contrasts'])
+        global_infl_slopes_2.append(-peak['max_slope'])
+        global_infl_slopes_2.append(peak['max_slope'])
 
-        inflection_points_3d = np.full((n_infl_total, 1, 1), np.nan, dtype=np.float32)
-        inflection_slopes_3d = np.full((n_infl_total, 1, 1), np.nan, dtype=np.float32)
-        inflection_contrasts_3d = np.full((n_infl_total, 1, 1), np.nan, dtype=np.float32)
-        fit_quality_map_1 = np.ones((1, 1), dtype=np.float32)
-        fit_quality_map_2 = np.ones((1, 1), dtype=np.float32)
-
-        if len(global_infl_pts_1) == n_infl_per_sweep:
-            inflection_points_3d[:n_infl_per_sweep, 0, 0] = global_infl_pts_1
-            inflection_slopes_3d[:n_infl_per_sweep, 0, 0] = global_infl_slopes_1
-            inflection_contrasts_3d[:n_infl_per_sweep, 0, 0] = global_infl_contrasts_1
+    # Fill arrays from sweep 1
+    failed_bins_1 = 0
+    for idx, ((iy, ix), fit_result) in enumerate(zip(bin_coords_1, fit_results_1)):
+        if fit_result is not None:
+            inflection_points_3d[:n_infl_per_sweep, iy, ix] = fit_result['inflection_points']
+            inflection_slopes_3d[:n_infl_per_sweep, iy, ix] = fit_result['inflection_slopes']
+            inflection_contrasts_3d[:n_infl_per_sweep, iy, ix] = fit_result['inflection_contrasts']
+            fit_quality_map_1[iy, ix] = fit_result['r2']
         else:
-            logger("  WARNING: sweep 1 peak_params has unexpected length — NaN values retained")
+            # Use global mean as fallback
+            if len(global_infl_pts_1) == n_infl_per_sweep:
+                inflection_points_3d[:n_infl_per_sweep, iy, ix] = global_infl_pts_1
+                inflection_slopes_3d[:n_infl_per_sweep, iy, ix] = global_infl_slopes_1
+                inflection_contrasts_3d[:n_infl_per_sweep, iy, ix] = global_infl_contrasts_1
+            failed_bins_1 += 1
 
-        if len(global_infl_pts_2) == n_infl_per_sweep:
-            inflection_points_3d[n_infl_per_sweep:, 0, 0] = global_infl_pts_2
-            inflection_slopes_3d[n_infl_per_sweep:, 0, 0] = global_infl_slopes_2
-            inflection_contrasts_3d[n_infl_per_sweep:, 0, 0] = global_infl_contrasts_2
+    # Fill arrays from sweep 2
+    failed_bins_2 = 0
+    for idx, ((iy, ix), fit_result) in enumerate(zip(bin_coords_2, fit_results_2)):
+        if fit_result is not None:
+            inflection_points_3d[n_infl_per_sweep:, iy, ix] = fit_result['inflection_points']
+            inflection_slopes_3d[n_infl_per_sweep:, iy, ix] = fit_result['inflection_slopes']
+            inflection_contrasts_3d[n_infl_per_sweep:, iy, ix] = fit_result['inflection_contrasts']
+            fit_quality_map_2[iy, ix] = fit_result['r2']
         else:
-            logger("  WARNING: sweep 2 peak_params has unexpected length — NaN values retained")
+            # Use global mean as fallback
+            if len(global_infl_pts_2) == n_infl_per_sweep:
+                inflection_points_3d[n_infl_per_sweep:, iy, ix] = global_infl_pts_2
+                inflection_slopes_3d[n_infl_per_sweep:, iy, ix] = global_infl_slopes_2
+                inflection_contrasts_3d[n_infl_per_sweep:, iy, ix] = global_infl_contrasts_2
+            failed_bins_2 += 1
 
-        logger(f"  Output shape: {inflection_points_3d.shape} (1×1 bin = global mean)")
-
-    else:
-        # ------------------------------------------------------------------
-        # BINNED MODE: spatially bin each ODMR cube, fit all bins in parallel.
-        # ------------------------------------------------------------------
-        logger("\n" + "="*60)
-        logger("PERFORMING PER-BIN ODMR FITTING")
-        logger("="*60)
-
-        odmr_cube_1 = sweep1_result['odmr_data_cube']
-        odmr_cube_2 = sweep2_result['odmr_data_cube']
-
-        binned_cube_1 = bin_qdm_cube(odmr_cube_1, bin_x, bin_y)
-        binned_cube_2 = bin_qdm_cube(odmr_cube_2, bin_x, bin_y)
-
-        n_freq1, ny_bins, nx_bins = binned_cube_1.shape
-
-        logger(f"Binned data shape: ({ny_bins}, {nx_bins}) bins")
-        logger(f"Total bins to fit: {ny_bins * nx_bins * 2} ({ny_bins * nx_bins} per sweep)")
-
-        # Setup frequency ranges for fitting
-        scan_width_1 = freqlist1.max() - freqlist1.min()
-        margin_1 = max(0.05 * scan_width_1, 0.001)
-        freq_range_1 = (freqlist1.min() + margin_1, freqlist1.max() - margin_1)
-
-        scan_width_2 = freqlist2.max() - freqlist2.min()
-        margin_2 = max(0.05 * scan_width_2, 0.001)
-        freq_range_2 = (freqlist2.min() + margin_2, freqlist2.max() - margin_2)
-
-        def prepare_bin_data(binned_cube):
-            """Extract all bin spectra and coordinates for parallel fitting."""
-            bin_spectra = []
-            bin_coords = []
-            for iy in range(ny_bins):
-                for ix in range(nx_bins):
-                    bin_spectra.append(binned_cube[:, iy, ix])
-                    bin_coords.append((iy, ix))
-            return bin_spectra, bin_coords
-
-        # Fit all bins for sweep 1
-        logger(f"Fitting sweep 1 bins...")
-        bin_spectra_1, bin_coords_1 = prepare_bin_data(binned_cube_1)
-
-        fit_results_1 = Parallel(n_jobs=n_jobs, verbose=5)(
-            delayed(_fit_single_bin_odmr)(
-                spectrum, freqlist1, n_lorentz_per_sweep, fit_tolerance, max_iters, freq_range_1
-            )
-            for spectrum in bin_spectra_1
-        )
-
-        # Fit all bins for sweep 2
-        logger(f"Fitting sweep 2 bins...")
-        bin_spectra_2, bin_coords_2 = prepare_bin_data(binned_cube_2)
-
-        fit_results_2 = Parallel(n_jobs=n_jobs, verbose=5)(
-            delayed(_fit_single_bin_odmr)(
-                spectrum, freqlist2, n_lorentz_per_sweep, fit_tolerance, max_iters, freq_range_2
-            )
-            for spectrum in bin_spectra_2
-        )
-
-        # Allocate 3D arrays
-        logger("\nAssembling 3D parameter arrays...")
-        inflection_points_3d = np.full((n_infl_total, ny_bins, nx_bins), np.nan, dtype=np.float32)
-        inflection_slopes_3d = np.full((n_infl_total, ny_bins, nx_bins), np.nan, dtype=np.float32)
-        inflection_contrasts_3d = np.full((n_infl_total, ny_bins, nx_bins), np.nan, dtype=np.float32)
-
-        fit_quality_map_1 = np.full((ny_bins, nx_bins), np.nan, dtype=np.float32)
-        fit_quality_map_2 = np.full((ny_bins, nx_bins), np.nan, dtype=np.float32)
-
-        # Get global mean parameters as fallback for failed bins
-        global_peak_params_1 = sweep1_result.get('peak_params', [])
-        global_peak_params_2 = sweep2_result.get('peak_params', [])
-
-        global_infl_pts_1, global_infl_slopes_1, global_infl_contrasts_1 = [], [], []
-        for peak in global_peak_params_1:
-            global_infl_pts_1.extend(peak['inflection_pts'])
-            global_infl_contrasts_1.extend(peak['inflection_contrasts'])
-            global_infl_slopes_1.append(-peak['max_slope'])
-            global_infl_slopes_1.append(peak['max_slope'])
-
-        global_infl_pts_2, global_infl_slopes_2, global_infl_contrasts_2 = [], [], []
-        for peak in global_peak_params_2:
-            global_infl_pts_2.extend(peak['inflection_pts'])
-            global_infl_contrasts_2.extend(peak['inflection_contrasts'])
-            global_infl_slopes_2.append(-peak['max_slope'])
-            global_infl_slopes_2.append(peak['max_slope'])
-
-        # Fill arrays from sweep 1
-        failed_bins_1 = 0
-        for idx, ((iy, ix), fit_result) in enumerate(zip(bin_coords_1, fit_results_1)):
-            if fit_result is not None:
-                inflection_points_3d[:n_infl_per_sweep, iy, ix] = fit_result['inflection_points']
-                inflection_slopes_3d[:n_infl_per_sweep, iy, ix] = fit_result['inflection_slopes']
-                inflection_contrasts_3d[:n_infl_per_sweep, iy, ix] = fit_result['inflection_contrasts']
-                fit_quality_map_1[iy, ix] = fit_result['r2']
-            else:
-                if len(global_infl_pts_1) == n_infl_per_sweep:
-                    inflection_points_3d[:n_infl_per_sweep, iy, ix] = global_infl_pts_1
-                    inflection_slopes_3d[:n_infl_per_sweep, iy, ix] = global_infl_slopes_1
-                    inflection_contrasts_3d[:n_infl_per_sweep, iy, ix] = global_infl_contrasts_1
-                failed_bins_1 += 1
-
-        # Fill arrays from sweep 2
-        failed_bins_2 = 0
-        for idx, ((iy, ix), fit_result) in enumerate(zip(bin_coords_2, fit_results_2)):
-            if fit_result is not None:
-                inflection_points_3d[n_infl_per_sweep:, iy, ix] = fit_result['inflection_points']
-                inflection_slopes_3d[n_infl_per_sweep:, iy, ix] = fit_result['inflection_slopes']
-                inflection_contrasts_3d[n_infl_per_sweep:, iy, ix] = fit_result['inflection_contrasts']
-                fit_quality_map_2[iy, ix] = fit_result['r2']
-            else:
-                if len(global_infl_pts_2) == n_infl_per_sweep:
-                    inflection_points_3d[n_infl_per_sweep:, iy, ix] = global_infl_pts_2
-                    inflection_slopes_3d[n_infl_per_sweep:, iy, ix] = global_infl_slopes_2
-                    inflection_contrasts_3d[n_infl_per_sweep:, iy, ix] = global_infl_contrasts_2
-                failed_bins_2 += 1
-
-        total_bins = ny_bins * nx_bins
-        logger(f"\nFit quality:")
-        logger(f"  Sweep 1: {total_bins - failed_bins_1}/{total_bins} bins successful "
-               f"({100*(total_bins - failed_bins_1)/total_bins:.1f}%)")
-        logger(f"  Sweep 2: {total_bins - failed_bins_2}/{total_bins} bins successful "
-               f"({100*(total_bins - failed_bins_2)/total_bins:.1f}%)")
-        if failed_bins_1 > 0 or failed_bins_2 > 0:
-            logger(f"  Failed bins replaced with global mean parameters")
+    total_bins = ny_bins * nx_bins
+    logger(f"\nFit quality:")
+    logger(f"  Sweep 1: {total_bins - failed_bins_1}/{total_bins} bins successful "
+           f"({100*(total_bins - failed_bins_1)/total_bins:.1f}%)")
+    logger(f"  Sweep 2: {total_bins - failed_bins_2}/{total_bins} bins successful "
+           f"({100*(total_bins - failed_bins_2)/total_bins:.1f}%)")
+    if failed_bins_1 > 0 or failed_bins_2 > 0:
+        logger(f"  Failed bins replaced with global mean parameters")
 
     # =========================================================================
     # OPTIONAL: VISUALIZE SPATIAL PARAMETER MAPS
@@ -3579,9 +3498,7 @@ def analyze_and_plot_odmr(
     save_fig=False,
     save_path=None,
     subfolder="",
-    title_prefix="ODMR Analysis",
-    fit_tolerance=None,
-    max_iters=None
+    title_prefix="ODMR Analysis"
 ):
     """
     High-level function to analyze and plot spatially-averaged ODMR data.
@@ -3611,12 +3528,6 @@ def analyze_and_plot_odmr(
         Subfolder within save_path.
     title_prefix : str
         Prefix for plot title.
-    fit_tolerance : float or None
-        Convergence tolerance (ftol and xtol) for scipy least_squares.
-        None uses fit_lorentzians default (1e-8).
-    max_iters : int or None
-        Maximum function evaluations for scipy least_squares.
-        None uses fit_lorentzians default (20000).
 
     Returns
     -------
@@ -3636,8 +3547,7 @@ def analyze_and_plot_odmr(
     subset_cube = get_cube_subset(odmr_data_cube, x_roi, y_roi)
 
     # 2. Perform fitting
-    analysis = fit_global_odmr(subset_cube, freqlist, n_lorentz=n_lorentz,
-                               fit_tolerance=fit_tolerance, max_iters=max_iters)
+    analysis = fit_global_odmr(subset_cube, freqlist, n_lorentz=n_lorentz)
     peak_params = analysis['peak_params']
     baseline = analysis['popt'][0]
     r2 = analysis['r2']
@@ -3723,24 +3633,10 @@ def analyze_and_plot_odmr(
     }
 
 
-def fit_global_odmr(odmr_data_cube, freqlist, n_lorentz=2, fit_tolerance=None, max_iters=None):
+def fit_global_odmr(odmr_data_cube, freqlist, n_lorentz=2):
     """
     Spatially averages a 3D ODMR cube and fits it to N Lorentzians.
-
-    Parameters
-    ----------
-    odmr_data_cube : np.ndarray
-        3D array of shape (n_freqs, ny, nx).
-    freqlist : np.ndarray
-        Frequency values in GHz.
-    n_lorentz : int
-        Number of Lorentzian peaks to fit.
-    fit_tolerance : float or None
-        Convergence tolerance (ftol and xtol) passed to scipy least_squares.
-        None uses fit_lorentzians default (1e-8).
-    max_iters : int or None
-        Maximum function evaluations passed to scipy least_squares.
-        None uses fit_lorentzians default (20000).
+    Updated to include analytic max slope and linear region frequencies.
     """
     # 1. Data Preparation: Spatial Average
     y_data = np.nanmean(odmr_data_cube, axis=(1, 2))
@@ -3752,18 +3648,11 @@ def fit_global_odmr(odmr_data_cube, freqlist, n_lorentz=2, fit_tolerance=None, m
     resonance_window = (x_data.min() + margin, x_data.max() - margin)
 
     # 2. Perform the Fit
-    tol_kwargs = {}
-    if fit_tolerance is not None:
-        tol_kwargs['ftol'] = fit_tolerance
-        tol_kwargs['xtol'] = fit_tolerance
-    if max_iters is not None:
-        tol_kwargs['max_nfev'] = max_iters
     fit_results = fit_lorentzians(
-        x_data,
-        y_data,
-        n_lorentz=n_lorentz,
-        freq_range=resonance_window,
-        **tol_kwargs
+        x_data, 
+        y_data, 
+        n_lorentz=n_lorentz, 
+        freq_range=resonance_window
     )
     
     popt = fit_results['popt']
