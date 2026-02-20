@@ -393,7 +393,7 @@ class InflectionTableWidget(QWidget):
             return json.load(f)
 
     def get_current_as_preset(self, name: str, description: str = "",
-                              ref_freq_ghz: float = 1.0) -> dict:
+                              ref_freq_ghz: float = None) -> dict:
         """
         Package current table state as a preset dict.
 

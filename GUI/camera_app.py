@@ -16,6 +16,7 @@ BaslerCameraApp : QMainWindow
 import sys
 import json
 import queue
+import time
 import numpy as np
 from pathlib import Path
 from PySide6.QtWidgets import (
@@ -559,7 +560,6 @@ class CameraTabWidget(QWidget):
         self.last_fps_value = self._calculate_fps(timestamp)
 
         # Throttle display updates (max 30 fps) and status updates
-        import time
         now = time.time()
         should_update_display = (now - self.last_live_update >= 0.033)
         should_update_status = (now - self.last_status_update > 0.5)
