@@ -1626,6 +1626,49 @@ def identify_multi_transition_inflection_points_binned(
     }
 
 
+def print_binned_inflection_summary(multi_sweep_result):
+    """
+    Print a summary of spatially-binned inflection point identification results.
+
+    Displays array shape, spatial bin count, per-sweep fit quality (mean and
+    minimum R²), and per-inflection-point statistics (mean ± std frequency,
+    mean |slope|) across all spatial bins.
+
+    Parameters
+    ----------
+    multi_sweep_result : dict
+        Result dict from identify_multi_transition_inflection_points_binned.
+        Expected keys: 'inflection_points' (8, ny_bins, nx_bins),
+        'inflection_slopes', 'ny_bins', 'nx_bins',
+        'fit_quality_map_1', 'fit_quality_map_2'.
+    """
+    pts = multi_sweep_result['inflection_points']
+    slopes = multi_sweep_result['inflection_slopes']
+    ny_bins = multi_sweep_result['ny_bins']
+    nx_bins = multi_sweep_result['nx_bins']
+    fq1 = multi_sweep_result['fit_quality_map_1']
+    fq2 = multi_sweep_result['fit_quality_map_2']
+    n_pts = pts.shape[0]
+
+    print(f"\n{'='*70}")
+    print("BINNED PARAMETER EXTRACTION COMPLETE")
+    print(f"{'='*70}")
+    print(f"  Parameter array shape : {pts.shape}")
+    print(f"  Spatial bins          : {ny_bins} × {nx_bins} = {ny_bins * nx_bins}")
+    print(f"  Fit quality (sweep 1) : mean R² = {np.nanmean(fq1):.3f}  "
+          f"(min {np.nanmin(fq1):.3f})")
+    print(f"  Fit quality (sweep 2) : mean R² = {np.nanmean(fq2):.3f}  "
+          f"(min {np.nanmin(fq2):.3f})")
+    print(f"\n  Inflection point statistics (mean ± std across all bins):")
+    for i in range(n_pts):
+        freq_mean = np.nanmean(pts[i])
+        freq_std = np.nanstd(pts[i])
+        slope_mean = np.nanmean(np.abs(slopes[i]))
+        print(f"    Point {i + 1}: {freq_mean:.6f} ± {freq_std:.6f} GHz  |  "
+              f"|slope| = {slope_mean:.6f} GHz⁻¹")
+    print(f"{'='*70}")
+
+
 def format_multi_point_frequencies_binned(inflection_points, inflection_slopes, indices, parities,
                                           ref_freq, inflection_contrasts=None, bin_x=None, bin_y=None):
     """
@@ -1760,6 +1803,55 @@ def format_multi_point_frequencies_binned(inflection_points, inflection_slopes, 
         'bin_x': bin_x,
         'bin_y': bin_y
     }
+
+
+def print_binned_time_estimate(formatted_binned, exp_settings, num_samples):
+    """
+    Print an acquisition time estimate for binned multi-point measurement.
+
+    Computes the expected number of camera captures per sample based on the
+    number of spatial bins and signal/reference measurement points, then
+    estimates total acquisition time for several reference NUM_SAMPLES values
+    and for the planned num_samples.
+
+    Parameters
+    ----------
+    formatted_binned : dict
+        Result dict from format_multi_point_frequencies_binned.
+        Expected keys: 'freq_array' (n_pts, ny_bins, nx_bins), 'parity_list'.
+    exp_settings : dict
+        Nested settings dict with 'srs'['settling_time'] and
+        'camera'['exposure_time_us', 'n_frames'].
+    num_samples : int
+        Planned number of samples (highlighted in the printed table).
+    """
+    n_pts, ny_bins, nx_bins = formatted_binned['freq_array'].shape
+    n_bins = ny_bins * nx_bins
+    parity = np.asarray(formatted_binned['parity_list'])
+    n_signal = int(np.sum(parity != 0))
+    n_ref = n_pts - n_signal
+    t_settle = exp_settings['srs']['settling_time']
+    t_camera = (exp_settings['camera']['exposure_time_us'] * 1e-6
+                * exp_settings['camera']['n_frames'])
+    t_per_cap = t_settle + t_camera
+    n_caps = n_signal * n_bins + n_ref
+    t_per_sample = n_caps * t_per_cap
+
+    print(f"\n--- Acquisition time estimate (per-bin MW stepping) ---")
+    print(f"  Bins        : {ny_bins} × {nx_bins} = {n_bins}")
+    print(f"  Signal pts  : {n_signal}  |  Ref pts : {n_ref}")
+    print(f"  Caps/sample : {n_caps}  ({n_signal} × {n_bins} bins + {n_ref} refs)")
+    print(f"  t/capture   : {t_per_cap * 1e3:.1f} ms  "
+          f"(settling {t_settle * 1e3:.0f} ms + camera {t_camera * 1e3:.1f} ms)")
+    print(f"  Est. t/sample: {t_per_sample:.1f} s")
+    reference_ns = [10, 100, 1000]
+    for n in reference_ns:
+        marker = "  <-- current" if n == num_samples else ""
+        print(f"    {n:>5} samples → ~{n * t_per_sample / 3600:.2f} h{marker}")
+    if num_samples not in reference_ns:
+        print(f"    {num_samples:>5} samples → ~{num_samples * t_per_sample / 3600:.2f} h  <-- current")
+    print(f"  (Adjust NUM_SAMPLES or increase BIN_X/BIN_Y in cell 1 to change.)")
+    print(f"---")
 
 
 def measure_multi_point_binned(sg384, camera, freq_array, slope_array, parity_list,
@@ -4250,6 +4342,120 @@ def plot_field_map_comparison(raw_field_map, denoised_field_map, processed_field
 
     fig.tight_layout()
     return fig
+
+
+def plot_global_vs_binned_comparison(global_result, binned_result,
+                                      save_path=None, subfolder="",
+                                      show_plot=True, save_fig=False):
+    """
+    Create a 2×3 comparison figure: global-mean vs. spatially-binned field maps.
+
+    Rows: global-mean (top) and spatially-binned (bottom).
+    Columns: raw, denoised, processed (raw − denoised).
+    Color scales are matched per column across both rows. Prints a quantitative
+    comparison of field map std dev and median pixel noise to the console.
+
+    Parameters
+    ----------
+    global_result : dict or None
+        Result dict from analyze_multi_point_magnetometry for the global-mean
+        measurement. Pass None to skip the comparison figure and only print
+        binned statistics.
+        Expected keys: 'field_map_gauss_raw', 'field_map_gauss_denoised',
+        'field_map_gauss_processed', 'field_noise_gauss'.
+    binned_result : dict
+        Result dict from analyze_multi_point_magnetometry for the binned
+        measurement. Same expected keys as global_result.
+    save_path : str or Path or None
+        Base directory for saving the figure.
+    subfolder : str
+        Subfolder within save_path.
+    show_plot : bool
+        Display the figure inline (default True).
+    save_fig : bool
+        Save the figure as a .png file (default False).
+
+    Returns
+    -------
+    fig : plt.Figure or None
+        The 2×3 comparison figure, or None if global_result is None.
+    stats : dict
+        Quantitative comparison stats with keys: 'global_std', 'binned_std',
+        'global_noise', 'binned_noise', 'std_ratio', 'noise_ratio'.
+        Keys 'global_std' and 'global_noise' are omitted if global_result is None.
+    """
+    b_std = np.nanstd(binned_result['field_map_gauss_processed'])
+    b_noise = np.nanmedian(binned_result['field_noise_gauss'])
+
+    print(f"Binned field map statistics:")
+    print(f"  Mean  : {np.nanmean(binned_result['field_map_gauss_processed']):.4f} Gauss")
+    print(f"  Std   : {b_std:.4f} Gauss")
+    print(f"  Noise : {b_noise:.4f} Gauss (median pixel)")
+
+    if global_result is None:
+        print("\n[INFO] global_result=None — run global-mean cells first to enable comparison.")
+        return None, {'binned_std': b_std, 'binned_noise': b_noise}
+
+    def _sym_clim(arrays, pct=99.5):
+        vals = np.concatenate([a.ravel() for a in arrays])
+        vals = vals[np.isfinite(vals)]
+        v = np.nanpercentile(np.abs(vals), pct) if len(vals) > 0 else 1.0
+        return -v, v
+
+    vmin_r, vmax_r = _sym_clim([global_result['field_map_gauss_raw'],
+                                  binned_result['field_map_gauss_raw']])
+    vmin_d, vmax_d = _sym_clim([global_result['field_map_gauss_denoised'],
+                                  binned_result['field_map_gauss_denoised']])
+    vmin_p, vmax_p = _sym_clim([global_result['field_map_gauss_processed'],
+                                  binned_result['field_map_gauss_processed']])
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    fig.suptitle('Global Mean vs. Spatially-Binned Multi-Point Magnetometry',
+                 fontsize=14, fontweight='bold')
+
+    rows = [
+        ('Global Mean',      global_result),
+        ('Spatially-Binned', binned_result),
+    ]
+    cols = [
+        ('Raw',                      'field_map_gauss_raw',       vmin_r, vmax_r),
+        ('Denoised',                 'field_map_gauss_denoised',  vmin_d, vmax_d),
+        ('Processed (Raw−Denoised)', 'field_map_gauss_processed', vmin_p, vmax_p),
+    ]
+
+    for r, (row_label, res) in enumerate(rows):
+        axes[r, 0].set_ylabel(row_label, fontsize=12, fontweight='bold')
+        for c, (col_title, key, vmin, vmax) in enumerate(cols):
+            ax = axes[r, c]
+            im = ax.imshow(res[key], cmap='RdBu_r', vmin=vmin, vmax=vmax, origin='upper')
+            ax.set_title(col_title)
+            ax.set_xlabel('Pixel X')
+            fig.colorbar(im, ax=ax, fraction=0.046, label='B (Gauss)')
+
+    fig.tight_layout()
+
+    if save_fig and save_path is not None:
+        save_dir = Path(save_path) / subfolder
+        save_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        fname = save_dir / f"global_vs_binned_comparison_{ts}.png"
+        fig.savefig(fname, dpi=300, bbox_inches='tight')
+        print(f"Saved: {fname}")
+
+    if show_plot:
+        plt.show()
+
+    g_std = np.nanstd(global_result['field_map_gauss_processed'])
+    g_noise = np.nanmedian(global_result['field_noise_gauss'])
+    print(f"\nQuantitative comparison (global mean vs. binned):")
+    print(f"  Std dev      : {g_std:.4f} G  vs.  {b_std:.4f} G  (ratio {b_std / g_std:.2f}x)")
+    print(f"  Median noise : {g_noise:.4f} G  vs.  {b_noise:.4f} G  (ratio {b_noise / g_noise:.2f}x)")
+
+    return fig, {
+        'global_std': g_std, 'binned_std': b_std,
+        'global_noise': g_noise, 'binned_noise': b_noise,
+        'std_ratio': b_std / g_std, 'noise_ratio': b_noise / g_noise,
+    }
 
 
 # ============================================================
