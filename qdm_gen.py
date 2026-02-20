@@ -1774,7 +1774,10 @@ def measure_multi_point_binned(sg384, camera, freq_array, slope_array, parity_li
 
     Algorithm:
     1. Upsample freq_array, slope_array, baseline_array from bin to full resolution
-    2. Measure PL at each frequency (full resolution)
+    2. Measure PL at each frequency point:
+       - Signal points (parity != 0): step the MW through each bin's local inflection
+         frequency and assemble the full-res PL image from per-bin camera captures.
+       - Reference points (parity == 0): single capture at ref_freq (same for all bins).
     3. Apply per-pixel PL-to-frequency conversion: Δf = (C - C_baseline) / slope
     4. Combine according to parities
 
@@ -1785,7 +1788,10 @@ def measure_multi_point_binned(sg384, camera, freq_array, slope_array, parity_li
     camera : basler instance
         Camera instance.
     freq_array : np.ndarray
-        3D array of frequencies, shape (n_points, ny_bins, nx_bins).
+        3D array of frequencies at bin resolution, shape (n_points, ny_bins, nx_bins).
+        For signal points, each bin entry holds the local inflection frequency used to
+        set the MW hardware for that bin's pixels. For reference points (parity == 0),
+        all bin entries are equal to ref_freq.
     slope_array : np.ndarray
         3D array of slopes, shape (n_points, ny_bins, nx_bins).
     parity_list : np.ndarray or list
@@ -1809,8 +1815,14 @@ def measure_multi_point_binned(sg384, camera, freq_array, slope_array, parity_li
 
     Notes
     -----
-    The MW frequency is set to the median of each freq_array slice (since frequencies
-    vary spatially, we use a representative value to set the hardware).
+    For signal measurements, the MW is stepped through each bin's local inflection
+    frequency. Only that bin's pixel region is used from each captured frame, then the
+    regions are assembled into a full-res image. This ensures that C_measured and
+    C_baseline correspond to the same point on the local Lorentzian, correctly removing
+    the bias field gradient. Acquisition time scales as N_bins × N_signal_points.
+
+    For reference measurements (parity == 0), all bins share the same ref_freq so a
+    single camera capture suffices.
     """
     parity_list = np.asarray(parity_list)
     n_points = len(parity_list)
@@ -1839,17 +1851,42 @@ def measure_multi_point_binned(sg384, camera, freq_array, slope_array, parity_li
         for i in range(n_points)
     ])
 
-    # Take PL measurements at all frequencies
+    # Take PL measurements at all frequency points.
+    # Signal points (parity != 0): step MW through each bin's local inflection frequency
+    # and assemble full-res PL image from per-bin captures.
+    # Reference points (parity == 0): all bins share the same ref_freq; single capture.
+    ny_bins = freq_array.shape[1]
+    nx_bins = freq_array.shape[2]
+    bin_h = ny_full // ny_bins
+    bin_w = nx_full // nx_bins
+
     measurements = []
     for i in range(n_points):
-        # Use median frequency as representative value for MW generator
-        freq_scalar = np.nanmedian(freq_array_full[i])
-
-        sg384.set_frequency(freq_scalar, 'GHz')
-        time.sleep(settling_time)
-        camera.flush_buffer()
-        frame = camera.grab_frames(n_frames=n_frames, quiet=True)
-        measurements.append(frame.astype(np.float32))
+        if parity_list[i] == 0:
+            # Reference: single off-resonance capture (ref_freq is identical for all bins)
+            freq_scalar = np.nanmedian(freq_array[i])
+            sg384.set_frequency(freq_scalar, 'GHz')
+            time.sleep(settling_time)
+            camera.flush_buffer()
+            frame = camera.grab_frames(n_frames=n_frames, quiet=True)
+            measurements.append(frame.astype(np.float32))
+        else:
+            # Signal: step through each bin at its local inflection frequency
+            assembled = np.zeros((ny_full, nx_full), dtype=np.float32)
+            for iy in range(ny_bins):
+                for ix in range(nx_bins):
+                    freq_scalar = freq_array[i, iy, ix]
+                    sg384.set_frequency(freq_scalar, 'GHz')
+                    time.sleep(settling_time)
+                    camera.flush_buffer()
+                    frame = camera.grab_frames(n_frames=n_frames, quiet=True).astype(np.float32)
+                    # Pixel boundaries; last bin extends to full edge to cover any remainder
+                    y0 = iy * bin_h
+                    y1 = y0 + bin_h if iy < ny_bins - 1 else ny_full
+                    x0 = ix * bin_w
+                    x1 = x0 + bin_w if ix < nx_bins - 1 else nx_full
+                    assembled[y0:y1, x0:x1] = frame[y0:y1, x0:x1]
+            measurements.append(assembled)
 
     # Convert each signal PL to frequency using spatially-varying slope
     freq_shifts = []
@@ -4203,6 +4240,199 @@ def plot_field_map_comparison(raw_field_map, denoised_field_map, processed_field
 
     fig.tight_layout()
     return fig
+
+
+# ============================================================
+# Background Subtraction Analysis
+# ============================================================
+
+def analyze_background_subtraction(
+    bg_file,
+    sample_file,
+    gaussian_sigma=7.0,
+    save_path=None,
+    subfolder="",
+    show_plot=True,
+    save_fig=False,
+    save_data=False,
+):
+    """
+    Load two multi-point field map .npz files (background and sample), apply
+    Gaussian denoising to each, subtract the processed background from the
+    processed sample, and generate comparison figures.
+
+    The background file is a measurement taken without sample present. The
+    sample file is a measurement taken with sample. Subtracting removes
+    spatially-correlated noise and bias field artifacts common to both.
+
+    Parameters
+    ----------
+    bg_file : str or Path
+        Full path to background .npz file (measurement without sample).
+    sample_file : str or Path
+        Full path to sample .npz file (measurement with sample).
+    gaussian_sigma : float
+        Sigma (pixels) for Gaussian denoising filter (default 7.0).
+    save_path : str or Path, optional
+        Base directory for saving outputs.
+    subfolder : str
+        Subfolder within save_path.
+    show_plot : bool
+        Display figures inline (default True).
+    save_fig : bool
+        Save both figures as .png files (default False).
+    save_data : bool
+        Save result arrays as a .npz file (default False).
+
+    Returns
+    -------
+    dict with keys:
+        'bg_raw', 'bg_denoised', 'bg_processed'      : background field maps (Gauss)
+        'sample_raw', 'sample_denoised', 'sample_processed' : sample field maps (Gauss)
+        'subtracted'     : background-subtracted result = sample_processed - bg_processed
+        'figure_analysis': Figure, 2x3 panel showing raw/denoised/processed for each
+        'figure_comparison': Figure, 1x3 showing bg_processed, sample_processed, subtracted
+    """
+    bg_file = Path(bg_file)
+    sample_file = Path(sample_file)
+    bg_fname = bg_file.name
+    sample_fname = sample_file.name
+
+    # --- Load raw field maps ---
+    bg_raw = np.load(bg_file)['field_map_gauss_raw'].astype(np.float64)
+    sample_raw = np.load(sample_file)['field_map_gauss_raw'].astype(np.float64)
+
+    # --- Apply Gaussian denoising ---
+    bg_denoised = denoise_field_map(bg_raw, method='gaussian', gaussian_sigma=gaussian_sigma)
+    bg_processed = bg_raw - bg_denoised
+
+    sample_denoised = denoise_field_map(sample_raw, method='gaussian', gaussian_sigma=gaussian_sigma)
+    sample_processed = sample_raw - sample_denoised
+
+    # --- Background subtraction ---
+    subtracted = sample_processed - bg_processed
+
+    # --- Helper: symmetric color limits ---
+    def _sym_clim(arrays, pct=99.5):
+        vals = np.concatenate([a.ravel() for a in arrays])
+        vals = vals[np.isfinite(vals)]
+        vabs = np.nanpercentile(np.abs(vals), pct) if len(vals) > 0 else 1.0
+        return -vabs, vabs
+
+    source_label = f'BG: {bg_fname}  |  Sample: {sample_fname}'
+
+    # -------------------------------------------------------
+    # Figure 1: 2-row x 3-col analysis (raw / denoised / processed)
+    # -------------------------------------------------------
+    fig1, axes1 = plt.subplots(2, 3, figsize=(16, 9))
+    fig1.suptitle(
+        f'Field Map Analysis  |  Gaussian sigma={gaussian_sigma} px\n{source_label}',
+        fontsize=10, fontweight='bold'
+    )
+
+    vmin_raw, vmax_raw = _sym_clim([bg_raw, sample_raw])
+    vmin_den, vmax_den = _sym_clim([bg_denoised, sample_denoised])
+    vmin_proc, vmax_proc = _sym_clim([bg_processed, sample_processed])
+
+    rows = [
+        ('Background', bg_raw, bg_denoised, bg_processed),
+        ('Sample',     sample_raw, sample_denoised, sample_processed),
+    ]
+    col_specs = [
+        ('Raw', vmin_raw, vmax_raw),
+        ('Denoised (Gaussian)', vmin_den, vmax_den),
+        ('Processed (Raw - Denoised)', vmin_proc, vmax_proc),
+    ]
+
+    for r, (row_label, raw, den, proc) in enumerate(rows):
+        axes1[r, 0].set_ylabel(row_label, fontsize=12, fontweight='bold')
+        imgs = [raw, den, proc]
+        for c, (col_title, vmin, vmax) in enumerate(col_specs):
+            ax = axes1[r, c]
+            im = ax.imshow(imgs[c], cmap='RdBu_r', vmin=vmin, vmax=vmax, origin='upper')
+            ax.set_title(col_title, fontsize=10)
+            ax.set_xlabel('Pixel X')
+            fig1.colorbar(im, ax=ax, fraction=0.046, label='B (Gauss)')
+
+    fig1.tight_layout(rect=[0, 0.03, 1, 1])
+
+    # -------------------------------------------------------
+    # Figure 2: 1x3 comparison (bg processed / sample processed / subtracted)
+    # -------------------------------------------------------
+    fig2, axes2 = plt.subplots(1, 3, figsize=(17, 5))
+    fig2.suptitle(
+        f'Background Subtraction Result  |  Gaussian sigma={gaussian_sigma} px\n{source_label}',
+        fontsize=10, fontweight='bold'
+    )
+
+    vmin_proc_all, vmax_proc_all = _sym_clim([bg_processed, sample_processed])
+    vmin_sub, vmax_sub = _sym_clim([subtracted])
+
+    panels = [
+        (axes2[0], bg_processed,     vmin_proc_all, vmax_proc_all, 'Background\n(Processed: Raw - Denoised)'),
+        (axes2[1], sample_processed, vmin_proc_all, vmax_proc_all, 'Sample\n(Processed: Raw - Denoised)'),
+        (axes2[2], subtracted,       vmin_sub,      vmax_sub,      'Background-Subtracted\n(Sample - Background)'),
+    ]
+    for i, (ax, img, vmin, vmax, title) in enumerate(panels):
+        im = ax.imshow(img, cmap='RdBu_r', vmin=vmin, vmax=vmax, origin='upper')
+        ax.set_title(title, fontsize=11)
+        ax.set_xlabel('Pixel X')
+        if i == 0:
+            ax.set_ylabel('Pixel Y')
+        fig2.colorbar(im, ax=ax, fraction=0.046, label='B (Gauss)')
+
+    fig2.tight_layout(rect=[0, 0.04, 1, 1])
+
+    # --- Save ---
+    if (save_fig or save_data) and save_path is not None:
+        save_dir = Path(save_path) / subfolder
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        if save_fig:
+            for fig_obj, base in [
+                (fig1, f'background_subtraction_analysis_{timestamp}.png'),
+                (fig2, f'background_subtracted_comparison_{timestamp}.png'),
+            ]:
+                out_path = save_dir / base
+                fig_obj.text(
+                    0.5, 0.002,
+                    f'File: {base}  |  {source_label}',
+                    ha='center', fontsize=6, color='gray',
+                    transform=fig_obj.transFigure
+                )
+                fig_obj.savefig(out_path, dpi=300, bbox_inches='tight')
+                print(f'Saved figure: {out_path}')
+
+        if save_data:
+            npz_name = f'background_subtracted_field_map_{timestamp}.npz'
+            npz_path = save_dir / npz_name
+            np.savez_compressed(
+                npz_path,
+                bg_raw=bg_raw, bg_denoised=bg_denoised, bg_processed=bg_processed,
+                sample_raw=sample_raw, sample_denoised=sample_denoised,
+                sample_processed=sample_processed,
+                subtracted=subtracted,
+                bg_file=str(bg_file),
+                sample_file=str(sample_file),
+                gaussian_sigma=gaussian_sigma,
+            )
+            print(f'Saved data: {npz_path}')
+
+    if show_plot:
+        plt.show()
+
+    return {
+        'bg_raw': bg_raw,
+        'bg_denoised': bg_denoised,
+        'bg_processed': bg_processed,
+        'sample_raw': sample_raw,
+        'sample_denoised': sample_denoised,
+        'sample_processed': sample_processed,
+        'subtracted': subtracted,
+        'figure_analysis': fig1,
+        'figure_comparison': fig2,
+    }
 
 
 def fast_guess_p0(
