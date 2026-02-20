@@ -25,7 +25,7 @@ class Ui_magnetometry_tab_content(object):
             magnetometry_tab_content.setObjectName(u"magnetometry_tab_content")
         self.mag_outer_hbox = QHBoxLayout(magnetometry_tab_content)
         self.mag_outer_hbox.setObjectName(u"mag_outer_hbox")
-        self.mag_outer_hbox.setContentsMargins(4)
+        self.mag_outer_hbox.setContentsMargins(4, 4, 4, 4)
         self.mag_controls_panel = QWidget(magnetometry_tab_content)
         self.mag_controls_panel.setObjectName(u"mag_controls_panel")
         self.mag_controls_panel.setMaximumWidth(380)

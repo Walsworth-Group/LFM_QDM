@@ -25,7 +25,7 @@ class Ui_settings_tab_content(object):
             settings_tab_content.setObjectName(u"settings_tab_content")
         self.settings_outer_vbox = QVBoxLayout(settings_tab_content)
         self.settings_outer_vbox.setObjectName(u"settings_outer_vbox")
-        self.settings_outer_vbox.setContentsMargins(8)
+        self.settings_outer_vbox.setContentsMargins(8, 8, 8, 8)
         self.settings_instrument_group = QGroupBox(settings_tab_content)
         self.settings_instrument_group.setObjectName(u"settings_instrument_group")
         self.formLayout = QFormLayout(self.settings_instrument_group)

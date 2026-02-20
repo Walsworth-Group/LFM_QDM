@@ -27,7 +27,7 @@ class Ui_sweep_tab_content(object):
         self.sweep_outer_hbox = QHBoxLayout(sweep_tab_content)
         self.sweep_outer_hbox.setSpacing(4)
         self.sweep_outer_hbox.setObjectName(u"sweep_outer_hbox")
-        self.sweep_outer_hbox.setContentsMargins(4)
+        self.sweep_outer_hbox.setContentsMargins(4, 4, 4, 4)
         self.sweep_controls_panel = QWidget(sweep_tab_content)
         self.sweep_controls_panel.setObjectName(u"sweep_controls_panel")
         self.sweep_controls_panel.setMaximumWidth(320)

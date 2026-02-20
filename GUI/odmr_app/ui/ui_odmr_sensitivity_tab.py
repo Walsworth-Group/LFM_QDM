@@ -24,7 +24,7 @@ class Ui_sensitivity_tab_content(object):
             sensitivity_tab_content.setObjectName(u"sensitivity_tab_content")
         self.sensitivity_outer_vbox = QVBoxLayout(sensitivity_tab_content)
         self.sensitivity_outer_vbox.setObjectName(u"sensitivity_outer_vbox")
-        self.sensitivity_outer_vbox.setContentsMargins(4)
+        self.sensitivity_outer_vbox.setContentsMargins(4, 4, 4, 4)
         self.hboxLayout = QHBoxLayout()
         self.hboxLayout.setObjectName(u"hboxLayout")
         self.sensitivity_map_widget = QWidget(sensitivity_tab_content)

@@ -25,7 +25,7 @@ class Ui_analysis_tab_content(object):
             analysis_tab_content.setObjectName(u"analysis_tab_content")
         self.analysis_outer_vbox = QVBoxLayout(analysis_tab_content)
         self.analysis_outer_vbox.setObjectName(u"analysis_outer_vbox")
-        self.analysis_outer_vbox.setContentsMargins(4)
+        self.analysis_outer_vbox.setContentsMargins(4, 4, 4, 4)
         self.analysis_display_placeholder = QWidget(analysis_tab_content)
         self.analysis_display_placeholder.setObjectName(u"analysis_display_placeholder")
 

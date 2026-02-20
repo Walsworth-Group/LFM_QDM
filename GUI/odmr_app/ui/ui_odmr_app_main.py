@@ -39,7 +39,7 @@ class Ui_ODMRMainWindow(object):
         self.main_vbox = QVBoxLayout(self.centralwidget)
         self.main_vbox.setSpacing(4)
         self.main_vbox.setObjectName(u"main_vbox")
-        self.main_vbox.setContentsMargins(4)
+        self.main_vbox.setContentsMargins(4, 4, 4, 4)
         self.rf_group = QGroupBox(self.centralwidget)
         self.rf_group.setObjectName(u"rf_group")
         self.rf_group.setMaximumHeight(80)
