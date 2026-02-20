@@ -1,0 +1,7 @@
+{
+  "name": "default_4pt",
+  "description": "Outer four inflection points, alternating parity (standard 4-point scheme)",
+  "selected_indices": [1, 4, 0, 5, 8, 0],
+  "selected_parities": [1, 1, 0, -1, -1, 0],
+  "ref_freq_ghz": 1.0
+}
