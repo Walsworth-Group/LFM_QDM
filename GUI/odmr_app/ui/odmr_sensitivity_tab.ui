@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>sensitivity_tab_content</class>
+ <widget class="QWidget" name="sensitivity_tab_content">
+  <layout class="QVBoxLayout" name="sensitivity_outer_vbox">
+   <property name="contentsMargins"><number>4</number><number>4</number><number>4</number><number>4</number></property>
+   <item>
+    <layout class="QHBoxLayout">
+     <item><widget class="QWidget" name="sensitivity_map_widget"/></item>
+     <item><widget class="QWidget" name="sensitivity_allan_widget"/></item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="sensitivity_controls_group">
+     <property name="title"><string>Controls</string></property>
+     <property name="maximumHeight"><number>90</number></property>
+     <layout class="QHBoxLayout">
+      <item>
+       <layout class="QFormLayout">
+        <item row="0" column="0"><widget class="QLabel"><property name="text"><string>Time/point override (s):</string></property></widget></item>
+        <item row="0" column="1"><widget class="QDoubleSpinBox" name="sensitivity_time_override_spin"><property name="decimals"><number>4</number></property><property name="minimum"><double>0.0</double></property><property name="maximum"><double>100.0</double></property><property name="value"><double>0.0</double></property><property name="specialValueText"><string>Auto</string></property></widget></item>
+        <item row="1" column="0"><widget class="QLabel"><property name="text"><string>Slope override (GHz&#8315;&#185;):</string></property></widget></item>
+        <item row="1" column="1"><widget class="QDoubleSpinBox" name="sensitivity_slope_override_spin"><property name="decimals"><number>2</number></property><property name="minimum"><double>0.0</double></property><property name="maximum"><double>1000.0</double></property><property name="value"><double>0.0</double></property><property name="specialValueText"><string>Auto</string></property></widget></item>
+       </layout>
+      </item>
+      <item><widget class="QPushButton" name="sensitivity_run_btn"><property name="text"><string>Compute Sensitivity</string></property></widget></item>
+      <item><widget class="QPushButton" name="sensitivity_allan_btn"><property name="text"><string>Allan Deviation</string></property></widget></item>
+      <item><widget class="QLabel" name="sensitivity_stats_label"><property name="text"><string>&#8212;</string></property></widget></item>
+      <item>
+       <layout class="QHBoxLayout">
+        <item><widget class="QLabel"><property name="text"><string>Prefix:</string></property></widget></item>
+        <item><widget class="QLineEdit" name="sensitivity_prefix_edit"><property name="placeholderText"><string>optional prefix</string></property></widget></item>
+        <item><widget class="QPushButton" name="sensitivity_save_npz_btn"><property name="text"><string>.npz</string></property></widget></item>
+        <item><widget class="QPushButton" name="sensitivity_save_png_btn"><property name="text"><string>.png</string></property></widget></item>
+       </layout>
+      </item>
+      <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+</ui>

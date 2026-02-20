@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ODMRMainWindow</class>
+ <widget class="QMainWindow" name="ODMRMainWindow">
+  <property name="windowTitle"><string>CW ODMR Magnetometry</string></property>
+  <property name="geometry"><rect><x>0</x><y>0</y><width>1600</width><height>1000</height></rect></property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="main_vbox">
+    <property name="spacing"><number>4</number></property>
+    <property name="contentsMargins"><number>4</number><number>4</number><number>4</number><number>4</number></property>
+    <item>
+     <widget class="QGroupBox" name="rf_group">
+      <property name="title"><string>MW Generator (SRS SG384)</string></property>
+      <property name="maximumHeight"><number>80</number></property>
+      <layout class="QHBoxLayout" name="rf_hbox">
+       <item><widget class="QLabel" name="rf_status_label"><property name="text"><string>&#9679; Disconnected</string></property></widget></item>
+       <item><widget class="QLabel" name="rf_freq_label"><property name="text"><string>Freq: &#8212; GHz</string></property></widget></item>
+       <item>
+        <widget class="QDoubleSpinBox" name="rf_freq_spinbox">
+         <property name="decimals"><number>6</number></property>
+         <property name="minimum"><double>0.0</double></property>
+         <property name="maximum"><double>8.0</double></property>
+         <property name="value"><double>2.870000</double></property>
+         <property name="suffix"><string> GHz</string></property>
+        </widget>
+       </item>
+       <item><widget class="QPushButton" name="rf_set_btn"><property name="text"><string>Set Freq</string></property></widget></item>
+       <item><widget class="QLabel" name="rf_amp_label"><property name="text"><string>Amp: &#8212; dBm</string></property></widget></item>
+       <item><widget class="QPushButton" name="rf_connect_btn"><property name="text"><string>Connect RF</string></property></widget></item>
+       <item>
+        <spacer name="rf_spacer">
+         <property name="orientation"><enum>Qt::Horizontal</enum></property>
+         <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QTabWidget" name="tab_widget">
+      <widget class="QWidget" name="camera_tab"><attribute name="title"><string>Camera</string></attribute></widget>
+      <widget class="QWidget" name="sweep_tab"><attribute name="title"><string>ODMR Sweep</string></attribute></widget>
+      <widget class="QWidget" name="magnetometry_tab"><attribute name="title"><string>Magnetometry</string></attribute></widget>
+      <widget class="QWidget" name="analysis_tab"><attribute name="title"><string>Analysis</string></attribute></widget>
+      <widget class="QWidget" name="sensitivity_tab"><attribute name="title"><string>Sensitivity</string></attribute></widget>
+      <widget class="QWidget" name="settings_tab"><attribute name="title"><string>Settings</string></attribute></widget>
+     </widget>
+    </item>
+    <item>
+     <widget class="QGroupBox" name="save_bar_group">
+      <property name="title"><string>Save</string></property>
+      <property name="maximumHeight"><number>70</number></property>
+      <layout class="QHBoxLayout" name="save_hbox">
+       <item><widget class="QLabel"><property name="text"><string>Base path:</string></property></widget></item>
+       <item><widget class="QLineEdit" name="save_base_path_edit"/></item>
+       <item><widget class="QPushButton" name="save_browse_btn"><property name="text"><string>Browse</string></property></widget></item>
+       <item><widget class="QLabel"><property name="text"><string>Subfolder:</string></property></widget></item>
+       <item><widget class="QLineEdit" name="save_subfolder_edit"/></item>
+       <item><widget class="QCheckBox" name="save_timestamp_chk"><property name="text"><string>Timestamp</string></property><property name="checked"><bool>true</bool></property></widget></item>
+       <item><widget class="QPushButton" name="save_all_btn"><property name="text"><string>Save All</string></property></widget></item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+  <widget class="QMenuBar" name="menubar">
+   <widget class="QMenu" name="menu_file">
+    <property name="title"><string>File</string></property>
+    <addaction name="action_save_config"/>
+    <addaction name="action_save_config_as"/>
+    <addaction name="action_load_config"/>
+    <addaction name="separator"/>
+    <addaction name="action_reset_defaults"/>
+   </widget>
+  </widget>
+  <action name="action_save_config"><property name="text"><string>Save Config</string></property><property name="shortcut"><string>Ctrl+S</string></property></action>
+  <action name="action_save_config_as"><property name="text"><string>Save Config As...</string></property></action>
+  <action name="action_load_config"><property name="text"><string>Load Config...</string></property></action>
+  <action name="action_reset_defaults"><property name="text"><string>Reset to Defaults</string></property></action>
+ </widget>
+</ui>
