@@ -134,6 +134,7 @@ class ODMRAppState(QObject):
         "perf_sweep_emit_every_n",
         "perf_live_avg_update_interval_samples",
         "perf_autosave_interval_samples",
+        "perf_camera_exposure_time_us",
     ]
 
     # ------------------------------------------------------------------
@@ -227,6 +228,7 @@ class ODMRAppState(QObject):
         self._perf_sweep_emit_every_n: int = 1
         self._perf_live_avg_update_interval_samples: int = 10
         self._perf_autosave_interval_samples: int = 50
+        self._perf_camera_exposure_time_us: int = 10000
 
     # ==================================================================
     # RF subsystem properties
@@ -727,6 +729,15 @@ class ODMRAppState(QObject):
     @perf_autosave_interval_samples.setter
     def perf_autosave_interval_samples(self, value: int):
         self._perf_autosave_interval_samples = int(value)
+
+    @property
+    def perf_camera_exposure_time_us(self) -> int:
+        """Camera exposure time in microseconds used during ODMR sweeps."""
+        return self._perf_camera_exposure_time_us
+
+    @perf_camera_exposure_time_us.setter
+    def perf_camera_exposure_time_us(self, value: int):
+        self._perf_camera_exposure_time_us = int(value)
 
     # ==================================================================
     # Business logic methods

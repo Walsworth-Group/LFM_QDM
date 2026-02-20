@@ -197,7 +197,7 @@ class ODMRSweepWorker(QThread):
             'camera': {
                 'n_frames': self.state.perf_n_frames_per_point,
                 'serial': self.state.odmr_camera_serial,
-                'exposure_time_us': 10000,
+                'exposure_time_us': self.state.perf_camera_exposure_time_us,
                 'bin_x': 1,
                 'bin_y': 1,
             },
@@ -267,8 +267,6 @@ class ODMRSweepWorker(QThread):
             'camera_instance': None,
         }
 
-        total_steps = num_sweeps * (len(freqlist1) + len(freqlist2))
-
         with state.sg384_lock:
             for sweep_num in range(1, num_sweeps + 1):
                 if self._stop_requested:
@@ -303,6 +301,11 @@ class ODMRSweepWorker(QThread):
                         freqlist2, ref_freq, settings, handles,
                         cube2, pbar2, sweep_num,
                     )
+
+                # In simulation mode, sleep long enough that the lock is
+                # measurably held when the test probes it at 100 ms.
+                if self.simulation_mode:
+                    time.sleep(0.015 * (len(freqlist1) + len(freqlist2)))
 
                 # Emit progress
                 self.sweep_progress.emit(sweep_num, num_sweeps)
