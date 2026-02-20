@@ -108,6 +108,27 @@ class ODMRMainWindow(QMainWindow):
         from tabs.settings_tab import SettingsTabHandler
         self._settings_handler = SettingsTabHandler(self.ui.settings_tab, self.state)
 
+        from tabs.sweep_tab import SweepTabHandler
+        self._sweep_handler = SweepTabHandler(
+            self.ui.sweep_tab, self.state,
+            stop_streaming_fn=self._stop_streaming_if_needed,
+            set_camera_mode_fn=lambda mode: setattr(self.state, 'odmr_camera_mode', mode),
+        )
+
+        from tabs.magnetometry_tab import MagnetometryTabHandler
+        self._mag_handler = MagnetometryTabHandler(
+            self.ui.magnetometry_tab, self.state,
+            stop_streaming_fn=self._stop_streaming_if_needed,
+            set_camera_mode_fn=lambda mode: setattr(self.state, 'odmr_camera_mode', mode),
+        )
+
+        from tabs.analysis_tab import AnalysisTabHandler
+        self._analysis_handler = AnalysisTabHandler(self.ui.analysis_tab, self.state)
+
+        from tabs.sensitivity_tab import SensitivityTabHandler
+        self._sensitivity_handler = SensitivityTabHandler(
+            self.ui.sensitivity_tab, self.state)
+
     # ======================================================================
     # Camera tab embedding
     # ======================================================================
@@ -396,8 +417,27 @@ class ODMRMainWindow(QMainWindow):
 
     @Slot()
     def _on_save_all(self):
-        """Placeholder: Save All triggered."""
-        self.statusBar().showMessage("Save All triggered")
+        """Trigger save on all tabs that have data."""
+        saved = []
+        handlers = [
+            ("Sweep",        getattr(self, '_sweep_handler', None)),
+            ("Magnetometry", getattr(self, '_mag_handler', None)),
+            ("Analysis",     getattr(self, '_analysis_handler', None)),
+            ("Sensitivity",  getattr(self, '_sensitivity_handler', None)),
+        ]
+        for name, handler in handlers:
+            if handler is None:
+                continue
+            try:
+                if handler.save_data():
+                    saved.append(name)
+            except Exception as e:
+                self.statusBar().showMessage(f"Save error in {name}: {e}", 5000)
+                return
+        if saved:
+            self.statusBar().showMessage(f"Saved: {', '.join(saved)}", 4000)
+        else:
+            self.statusBar().showMessage("No data to save yet.", 3000)
 
     # ======================================================================
     # File menu

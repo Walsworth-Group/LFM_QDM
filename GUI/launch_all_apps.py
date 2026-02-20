@@ -39,6 +39,7 @@ class AppLauncher:
         self.laser_power_app = None
         self.pid_control_app = None
         self.camera_app = None
+        self.odmr_app = None
 
     def launch_laser_power_monitor(self, x=50, y=50):
         """Launch laser power monitoring app with shared state."""
@@ -63,6 +64,17 @@ class AppLauncher:
         self.camera_app.setGeometry(x, y, 1400, 900)
         self.camera_app.show()
         print("[Launcher] Basler Camera App launched")
+
+    def launch_odmr_app(self, x=100, y=50):
+        """Launch ODMR magnetometry app."""
+        odmr_path = str(Path(__file__).parent / "odmr_app")
+        if odmr_path not in sys.path:
+            sys.path.insert(0, odmr_path)
+        from odmr_app.odmr_app import main as odmr_main
+        self.odmr_app = odmr_main(shared_state=self.shared_state)
+        self.odmr_app.setGeometry(x, y, 1600, 1000)
+        self.odmr_app.show()
+        print("[Launcher] ODMR App launched")
 
     def connect_apps(self):
         """
@@ -109,10 +121,11 @@ def main():
     """Launch all applications."""
     launcher = AppLauncher()
 
-    # Launch all three apps
+    # Launch all apps
     launcher.launch_laser_power_monitor(x=50, y=50)
     launcher.launch_pid_controller(x=550, y=50)
     launcher.launch_camera_app(x=1050, y=50)
+    launcher.launch_odmr_app(x=100, y=50)
 
     # Optionally connect apps for communication
     # Uncomment the line below to enable cross-app messaging
