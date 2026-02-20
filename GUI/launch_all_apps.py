@@ -67,9 +67,9 @@ class AppLauncher:
 
     def launch_odmr_app(self, x=100, y=50):
         """Launch ODMR magnetometry app."""
-        odmr_path = str(Path(__file__).parent / "odmr_app")
-        if odmr_path not in sys.path:
-            sys.path.insert(0, odmr_path)
+        gui_root = str(Path(__file__).parent)
+        if gui_root not in sys.path:
+            sys.path.insert(0, gui_root)
         from odmr_app.odmr_app import main as odmr_main
         self.odmr_app = odmr_main(shared_state=self.shared_state)
         self.odmr_app.setGeometry(x, y, 1600, 1000)

@@ -343,11 +343,13 @@ class ODMRMainWindow(QMainWindow):
     def _on_camera_mode_changed(self, mode_str):
         """Respond to ODMR-level camera mode changes (e.g., ACQUIRING)."""
         mode = CameraMode(mode_str) if not isinstance(mode_str, CameraMode) else mode_str
+        widget = self._camera_widget
         if mode == CameraMode.ACQUIRING:
-            # Best-effort: disable start streaming button if available
-            widget = self._camera_widget
             if hasattr(widget, 'start_button'):
                 widget.start_button.setEnabled(False)
+        elif mode == CameraMode.IDLE:
+            if hasattr(widget, 'start_button'):
+                widget.start_button.setEnabled(True)
 
     @Slot(bool)
     def _on_camera_streaming_changed(self, is_streaming):
@@ -419,6 +421,7 @@ class ODMRMainWindow(QMainWindow):
     def _on_save_all(self):
         """Trigger save on all tabs that have data."""
         saved = []
+        errors = []
         handlers = [
             ("Sweep",        getattr(self, '_sweep_handler', None)),
             ("Magnetometry", getattr(self, '_mag_handler', None)),
@@ -432,9 +435,11 @@ class ODMRMainWindow(QMainWindow):
                 if handler.save_data():
                     saved.append(name)
             except Exception as e:
-                self.statusBar().showMessage(f"Save error in {name}: {e}", 5000)
-                return
-        if saved:
+                errors.append(f"{name}: {e}")
+        if errors:
+            self.statusBar().showMessage(
+                f"Save errors — {'; '.join(errors)}", 8000)
+        elif saved:
             self.statusBar().showMessage(f"Saved: {', '.join(saved)}", 4000)
         else:
             self.statusBar().showMessage("No data to save yet.", 3000)
@@ -535,7 +540,7 @@ class ODMRMainWindow(QMainWindow):
         ui.save_timestamp_chk.setChecked(self.state.save_timestamp_enabled)
 
         # RF panel
-        ui.rf_freq_spinbox.setValue(self.state.rf_current_freq_ghz or 2.870)
+        ui.rf_freq_spinbox.setValue(self.state.rf_current_freq_ghz)
 
     # ======================================================================
     # Close event

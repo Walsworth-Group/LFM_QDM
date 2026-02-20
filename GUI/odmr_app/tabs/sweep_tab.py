@@ -155,8 +155,11 @@ class SweepTabHandler:
     def _on_streaming_stopped_then_sweep(self, is_streaming):
         """Start sweep once camera streaming has stopped."""
         if not is_streaming:
-            self.state.camera_state.camera_streaming_changed.disconnect(
-                self._on_streaming_stopped_then_sweep)
+            try:
+                self.state.camera_state.camera_streaming_changed.disconnect(
+                    self._on_streaming_stopped_then_sweep)
+            except RuntimeError:
+                pass
             self._start_sweep_worker()
 
     def _start_sweep_worker(self):

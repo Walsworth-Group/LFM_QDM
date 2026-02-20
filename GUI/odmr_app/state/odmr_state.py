@@ -154,7 +154,7 @@ class ODMRAppState(QObject):
         # RF subsystem
         # ------------------------------------------------------------------
         self._rf_is_connected: bool = False
-        self._rf_current_freq_ghz: float = 0.0
+        self._rf_current_freq_ghz: float = 2.870  # NV zero-field resonance (GHz)
         self._rf_amplitude_dbm: float = -10.0
         self._rf_address: str = "192.168.1.100"
 

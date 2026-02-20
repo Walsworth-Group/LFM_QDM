@@ -79,8 +79,11 @@ class SensitivityTabHandler:
             peak_params = (sweep_result.get("peak_params1", []) +
                            sweep_result.get("peak_params2", []))
 
-        time_override = self.ui.sensitivity_time_override_spin.value() or None
-        slope_override = self.ui.sensitivity_slope_override_spin.value() or None
+        time_override_val = self.ui.sensitivity_time_override_spin.value()
+        slope_override_val = self.ui.sensitivity_slope_override_spin.value()
+        # 0.0 is the "Auto" sentinel (per the UI spin box specialValueText)
+        time_override = time_override_val if time_override_val > 0.0 else None
+        slope_override = slope_override_val if slope_override_val > 0.0 else None
 
         try:
             self._sensitivity_result = qdm.analyze_stability_data(

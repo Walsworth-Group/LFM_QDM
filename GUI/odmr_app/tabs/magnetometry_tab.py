@@ -82,8 +82,8 @@ class MagnetometryTabHandler:
             try:
                 preset = self._inf_table.load_preset_from_file(f)
                 self._presets[preset["name"]] = preset
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[MagnetometryTab] Could not load preset {f.name}: {exc}")
         self._refresh_preset_combo()
 
     def _refresh_preset_combo(self):
@@ -231,8 +231,11 @@ class MagnetometryTabHandler:
     def _on_streaming_stopped_then_mag(self, is_streaming):
         """Start magnetometry once camera streaming has stopped."""
         if not is_streaming:
-            self.state.camera_state.camera_streaming_changed.disconnect(
-                self._on_streaming_stopped_then_mag)
+            try:
+                self.state.camera_state.camera_streaming_changed.disconnect(
+                    self._on_streaming_stopped_then_mag)
+            except RuntimeError:
+                pass
             self._start_mag_worker()
 
     def _start_mag_worker(self):
@@ -294,6 +297,7 @@ class MagnetometryTabHandler:
         if result is None:
             return False
         self._on_save_npz()
+        self._on_save_png()
         return True
 
     @Slot()
