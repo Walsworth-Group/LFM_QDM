@@ -3,14 +3,6 @@ Basler Camera Streaming Application
 
 PySide6 application for live camera streaming, image averaging, and data saving.
 Follows architecture defined in claude_app.md.
-
-Classes
--------
-CameraTabWidget : QWidget
-    Reusable widget containing all camera UI and logic. Can be embedded as a
-    tab inside a larger application (e.g. the ODMR app).
-BaslerCameraApp : QMainWindow
-    Thin wrapper around CameraTabWidget for standalone use.
 """
 
 import sys
@@ -37,35 +29,21 @@ from workers.camera_consumer import CameraConsumer
 CONFIG_FILE = Path(__file__).parent / "config" / "basler_camera_config.json"
 
 
-class CameraTabWidget(QWidget):
+class BaslerCameraApp(QMainWindow):
     """
-    Reusable camera widget containing all UI and logic for Basler camera streaming.
-
-    Can be embedded as a tab in a larger application, or wrapped by
-    BaslerCameraApp for standalone use.
+    Main window for Basler camera streaming application.
 
     Architecture:
     - CameraState: single source of truth
     - CameraWorker: producer thread for frame acquisition
     - CameraConsumer: consumer thread for averaging and saving
     - Producer-consumer pattern with queue.Queue
-
-    Parameters
-    ----------
-    state : CameraState, optional
-        Shared state object. A new one is created if not provided.
-    config_file : Path or str, optional
-        Path to the JSON config file. Defaults to the standard CONFIG_FILE.
-    parent : QWidget, optional
-        Parent widget.
     """
 
-    def __init__(self, state=None, config_file=None, parent=None):
-        super().__init__(parent)
-
+    def __init__(self, state=None):
+        super().__init__()
         # Use provided state or create new one
         self.state = state if state is not None else CameraState()
-        self._config_file = Path(config_file) if config_file is not None else CONFIG_FILE
 
         # Worker threads
         self.worker = None
@@ -89,18 +67,25 @@ class CameraTabWidget(QWidget):
         self.fps_window_size = 10
         self.last_fps_value = 0.0
 
-        # Load configuration (before _init_ui so state is ready;
-        # UI widgets populated after _init_ui via _apply_config_to_ui)
-        self._load_config()
+        # Load configuration (before init_ui so state is ready;
+        # UI widgets populated after init_ui via _apply_config_to_ui)
+        self.load_config()
 
-        self._init_ui()
-        self._connect_signals()
+        self.init_ui()
+        self.connect_signals()
         self._apply_config_to_ui()
 
-    def _init_ui(self):
+    def init_ui(self):
         """Initialize the user interface."""
+        self.setWindowTitle("Basler Camera Streaming")
+        self.setGeometry(100, 100, 1200, 575)
+
+        # Create central widget
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+
         main_layout = QVBoxLayout()
-        self.setLayout(main_layout)
+        central_widget.setLayout(main_layout)
 
         # === Top section: Live and Averaged Images ===
         images_layout = QHBoxLayout()
@@ -414,7 +399,7 @@ class CameraTabWidget(QWidget):
 
         return panel
 
-    def _connect_signals(self):
+    def connect_signals(self):
         """Connect state signals to UI update methods."""
         self.state.camera_connection_changed.connect(self.on_connection_changed)
         self.state.camera_streaming_changed.connect(self.on_streaming_changed)
@@ -805,21 +790,21 @@ class CameraTabWidget(QWidget):
 
             config = self.state.get_config()
 
-            with open(self._config_file, 'w') as f:
+            with open(CONFIG_FILE, 'w') as f:
                 json.dump(config, f, indent=2)
 
-            self.statusLabel.setText(f"Status: Configuration saved to {self._config_file}")
+            self.statusLabel.setText(f"Status: Configuration saved to {CONFIG_FILE}")
 
         except Exception as e:
             self.statusLabel.setText(f"Status: Error saving config - {str(e)}")
 
-    def _load_config(self):
-        """Load configuration from file into state (call before _init_ui)."""
-        if not self._config_file.exists():
+    def load_config(self):
+        """Load configuration from file into state (call before init_ui)."""
+        if not CONFIG_FILE.exists():
             return
 
         try:
-            with open(self._config_file, 'r') as f:
+            with open(CONFIG_FILE, 'r') as f:
                 config = json.load(f)
 
             self.state.load_config(config)
@@ -828,7 +813,7 @@ class CameraTabWidget(QWidget):
             print(f"Error loading config: {e}")
 
     def _apply_config_to_ui(self):
-        """Sync UI widgets to match loaded state (call after _init_ui)."""
+        """Sync UI widgets to match loaded state (call after init_ui)."""
         # Format combo box
         fmt_map = {'npy': 0, 'tiff': 1, 'jpg': 2}
         self.format_combo.setCurrentIndex(fmt_map.get(self.state.camera_save_format, 0))
@@ -839,15 +824,6 @@ class CameraTabWidget(QWidget):
         # Flip checkboxes
         self.flip_h_checkbox.setChecked(self.state.camera_flip_horizontal)
         self.flip_v_checkbox.setChecked(self.state.camera_flip_vertical)
-
-    def cleanup(self):
-        """Stop workers cleanly. Call from parent window's closeEvent."""
-        if self.worker and self.worker.isRunning():
-            self.worker.stop()
-            self.worker.wait(3000)
-        if self.consumer and self.consumer.isRunning():
-            self.consumer.stop()
-            self.consumer.wait(3000)
 
     # === Helper Methods ===
 
@@ -1033,30 +1009,14 @@ class CameraTabWidget(QWidget):
                 if idx != -1:
                     self.avg_status_label.setText(base_text[:idx])
 
-
-class BaslerCameraApp(QMainWindow):
-    """Standalone camera app. Thin wrapper around CameraTabWidget.
-
-    Parameters
-    ----------
-    state : CameraState, optional
-        Shared state object. A new one is created if not provided.
-    parent : QWidget, optional
-        Parent widget.
-    """
-
-    def __init__(self, state=None, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Basler Camera Streaming")
-        self.setGeometry(100, 100, 1200, 575)
-        self._camera_widget = CameraTabWidget(state=state, parent=self)
-        self.setCentralWidget(self._camera_widget)
-        self.state = self._camera_widget.state  # backward compat
-
     def closeEvent(self, event):
         """Clean up when window is closed."""
-        self._camera_widget.cleanup()
-        self._camera_widget.save_config()
+        if self.worker:
+            self.worker.stop()
+            self.worker.wait()
+        if self.consumer:
+            self.consumer.stop()
+            self.consumer.wait()
         event.accept()
 
 
