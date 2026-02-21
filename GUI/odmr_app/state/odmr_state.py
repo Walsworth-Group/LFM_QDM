@@ -227,7 +227,7 @@ class ODMRAppState(QObject):
         # Camera mode
         # ------------------------------------------------------------------
         self._odmr_camera_mode: CameraMode = CameraMode.IDLE
-        self._odmr_camera_serial: str = ""
+        self._odmr_camera_serial: str = "25061217"  # Basler acA1920-155um (ODMR camera)
 
         # ------------------------------------------------------------------
         # Save settings

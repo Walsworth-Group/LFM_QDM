@@ -19,10 +19,10 @@ Expected frame shape with default 4×4 binning:
     numpy shape: (300, 480)
 
 Usage:
-    python tests/test_hardware_camera.py              # 4×4 binning (default)
+    python tests/test_hardware_camera.py              # 4×4 binning, serial 25061217 (defaults)
     python tests/test_hardware_camera.py --bin 2      # 2×2 binning
-    python tests/test_hardware_camera.py --bin 1      # no binning (full res)
-    python tests/test_hardware_camera.py --serial 25061217  # specific camera
+    python tests/test_hardware_camera.py --bin 1      # no binning (full res: 1200×1920)
+    python tests/test_hardware_camera.py --serial 23049069  # other camera
     python tests/test_hardware_camera.py --exposure 5000    # 5 ms exposure
 """
 
@@ -182,8 +182,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Basler camera hardware test")
     parser.add_argument("--bin", type=int, default=4,
                         help="Hardware binning factor (1-4, default 4)")
-    parser.add_argument("--serial", type=str, default="",
-                        help="Camera serial number (default: first found)")
+    parser.add_argument("--serial", type=str, default="25061217",
+                        help="Camera serial number (default: 25061217, ODMR Basler acA1920-155um)")
     parser.add_argument("--exposure", type=int, default=10000,
                         help="Exposure time in µs (default 10000)")
     args = parser.parse_args()
