@@ -166,16 +166,28 @@ Key cell groups (by markdown headers / cell IDs):
   - Cell 38: Reanalyze field map with different denoising
 
 ## GUI directory structure (/GUI/)
-Three standalone PySide6 + pyqtgraph apps for instrument control. All apps are run from the `GUI/` root (e.g. `python pid_control_app.py` or `python launch_all_apps.py`).
+Four PySide6 + pyqtgraph apps for instrument control.
 
 ### App entry points (GUI root)
 * `pid_control_app.py` — SRS SIM960 PID controller GUI
 * `laser_power_app.py` — NI-DAQ laser power monitor GUI
 * `camera_app.py` — Basler camera streaming GUI
-* `launch_all_apps.py` — Launches all three apps in one QApplication with shared state
+* `launch_all_apps.py` — Launches the three instrument apps in one QApplication with shared state
 * `simple_app.py` — Minimal example/sandbox app
 
-### Subfolders
+### ODMR magnetometry GUI (odmr_app/)
+The primary experiment GUI lives in `GUI/odmr_app/`. Run with `python GUI/odmr_app/odmr_app.py` or via launchers. It provides the full CW ODMR → field map workflow in 5 tabs: ODMR Sweep, Magnetometry, Analysis, Sensitivity, Settings. See `GUI/odmr_app/ODMR_APP_README.md` for complete documentation.
+
+Key structure:
+* `odmr_app/state/odmr_state.py` — `ODMRAppState`: all signals, properties, config I/O
+* `odmr_app/workers/` — `SG384Worker`, `ODMRSweepWorker`, `MagnetometryWorker`, `AnalysisWorker`
+* `odmr_app/tabs/` — `SweepTabHandler`, `MagnetometryTabHandler`, `AnalysisTabHandler`, `SensitivityTabHandler`, `SettingsTabHandler`
+* `odmr_app/widgets/` — `InflectionTableWidget`, `FieldMapDisplayWidget` (3-panel RdBu_r with colorbars)
+* `odmr_app/ui/` — Qt Designer `.ui` source files + generated `ui_*.py` files
+* `odmr_app/config/` — `odmr_app_config.json` (auto-saved) + `presets/` folder
+* `odmr_app/tests/` — 50 pytest tests (run with `python -m pytest GUI/odmr_app/tests/`)
+
+### Instrument helper apps (GUI root + subfolders)
 * `state/` — Qt state objects (QObject + Signal). No internal GUI imports.
   - `experiment_state.py` — `ExperimentState`: shared state for laser power + PID apps
   - `camera_state.py` — `CameraState`: shared state for camera app

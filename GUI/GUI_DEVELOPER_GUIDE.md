@@ -1,7 +1,9 @@
 # GUI Developer Guide
 
 Reference document for understanding, modifying, and extending the QDM instrument control GUI apps.
-Last updated: 2026-02-17.
+Last updated: 2026-02-20.
+
+> **Note:** This guide covers the three instrument helper apps (`laser_power_app`, `pid_control_app`, `camera_app`) and the multi-app launcher. For the primary ODMR magnetometry GUI (`GUI/odmr_app/`), see `GUI/odmr_app/ODMR_APP_README.md`.
 
 ---
 
@@ -27,10 +29,11 @@ Last updated: 2026-02-17.
 
 ```
 GUI/
+├── odmr_app/                 ← ODMR magnetometry GUI (see odmr_app/ODMR_APP_README.md)
 ├── laser_power_app.py        ← NI-DAQ laser power monitor
 ├── pid_control_app.py        ← SRS SIM960 PID controller
 ├── camera_app.py             ← Basler camera streaming
-├── launch_all_apps.py        ← Launches all three with shared state
+├── launch_all_apps.py        ← Launches all three instrument apps with shared state
 ├── simple_app.py             ← Minimal sandbox/example
 │
 ├── launch_laser_power.bat    ← Double-click launcher (with console)

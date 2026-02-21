@@ -39,7 +39,8 @@ GUI/odmr_app/
 ├── workers/
 │   ├── sg384_worker.py      SG384Worker — RF polling and command queue
 │   ├── odmr_sweep_worker.py ODMRSweepWorker — two-transition ODMR sweep
-│   └── magnetometry_worker.py MagnetometryWorker — multi-point acquisition
+│   ├── magnetometry_worker.py MagnetometryWorker — multi-point acquisition
+│   └── analysis_worker.py   AnalysisWorker — background field-map analysis (non-blocking)
 ├── tabs/
 │   ├── settings_tab.py      SettingsTabHandler — instrument + perf parameters
 │   ├── sweep_tab.py         SweepTabHandler — live spectra, inflection table
@@ -68,7 +69,8 @@ GUI/odmr_app/
     ├── test_inflection_table.py
     ├── test_field_map_display.py
     ├── test_smoke.py              Startup/import smoke tests (no hardware, <2s)
-    └── test_gui_integration.py   pytest-qt button-click tests
+    ├── test_gui_integration.py   pytest-qt button-click tests
+    └── run_sweep_and_mag.py      Hardware integration test (requires connected hardware)
 ```
 
 ---
@@ -82,7 +84,7 @@ Embeds the existing `CameraTabWidget` (from `camera_app.py`) for live Basler cam
 Runs a two-transition ODMR frequency sweep (`identify_multi_transition_inflection_points` equivalent):
 - Configurable frequency range for each NV transition (lower m=0→−1, upper m=0→+1)
 - **Sweep-specific camera settings**: exposure time (µs) and frames per point, separate from magnetometry
-- Progress bar shows per-frequency-step progress; Stop button takes effect within one step
+- Progress bar shows per-frequency-step progress with elapsed and estimated remaining time; Stop button takes effect within one step
 - Live spectrum update during acquisition (dark purple dots, black Lorentzian fit overlay)
 - After completion: Lorentzian fitting, 8 inflection point extraction, table populated
 - "Send to Magnetometry" button: copies sweep camera settings → magnetometry tab and triggers auto-population of inflection table
@@ -94,15 +96,19 @@ Runs multi-point differential magnetometry (`run_multi_point_stability_measureme
 - **InflectionTableWidget**: shows all 8 inflection points; user selects which to use and their parity (+1 signal, −1 signal, 0 reference)
 - **Preset management**: save/load/delete named presets in `config/presets/*.json`; `default_4pt.json` is included (outer 4 points, alternating parity)
 - **Point file I/O**: export/import inflection point data to JSON for session restore
-- Live cumulative average field map preview (pyqtgraph ImageView, updates every N samples)
+- **Live field map preview** with display mode selector (Raw / Denoised / Processed — all update live every N samples; gaussian_filter on 300×480 array is ~30 ms)
+- **Colorbar** with adjustable min/max spinboxes and Auto button on the live preview panel
+- **Sw Bin X/Y** displayed as a compact single row (`X / Y`)
+- Progress bar shows elapsed and estimated remaining time
 - Autosave partial data every N samples to `_magnetometry_partial_autosave.npz`
 - Save: `.npz` (stability cube, freq/slope/parity/baseline lists, metadata) and `.png` (preview)
 
 ### Analysis tab
 Post-processes the stability cube into a magnetic field map (`analyze_multi_point_magnetometry`):
-- Auto-runs when magnetometry completes
+- Auto-runs when magnetometry completes; analysis runs in `AnalysisWorker` (background QThread) — UI stays responsive
 - Controls: denoising method (none/gaussian/tv/wavelet/nlm/bilateral), Gaussian sigma, outlier sigma, reference mode (global_mean/roi)
 - Three-panel `FieldMapDisplayWidget`: raw | denoised | processed (RdBu_r colormap, symmetric range)
+- **Colorbars** on each panel: adjustable min/max spinboxes + Auto button; "Auto Range (All Panels)" button resets all three
 - Stats label: mean, std, range of the processed field map
 - Save: `.npz` (all three field maps) and `.png` (matplotlib figure)
 
@@ -191,6 +197,7 @@ The app auto-saves all settings to `config/odmr_app_config.json` on close. This 
 | `analysis_completed` | `dict` | Field map analysis finishes |
 | `camera_mode_changed` | `str` | Camera mode changes; value is `"idle"`, `"streaming"`, or `"acquiring"` — **a string, not a `CameraMode` enum** |
 | `mag_camera_settings_pushed` | `int, int` | "Send to Magnetometry" clicked (exposure_us, n_frames) |
+| `status_message` | `str` | Any tab emits a short one-line activity message; displayed in the Qt status bar |
 
 ### Properties with signals (configurable, persisted in JSON)
 
@@ -276,7 +283,7 @@ cd GUI/odmr_app
 python -m pytest tests/ -v
 ```
 
-49 tests across three layers:
+50 tests across three layers:
 
 | File | Layer | What it covers |
 |---|---|---|
@@ -305,6 +312,7 @@ All tests use `simulation_mode=True` and `MagicMock` — no hardware contact. Re
 
 ## Development notes
 
-- **UI files**: `.ui` files in `ui/` are Qt Designer XML sources. Regenerate Python bindings with: `pyside6-uic -g python odmr_sweep_tab.ui -o ui_odmr_sweep_tab.py` (run from `ui/`). Never edit `ui_*.py` files by hand.
+- **UI files**: `.ui` files in `ui/` are Qt Designer XML sources. Regenerate Python bindings with: `pyside6-uic -g python odmr_sweep_tab.ui -o ui_odmr_sweep_tab.py` (run from `ui/`). Never edit `ui_*.py` files by hand **except** to work around a known `pyside6-uic` bug: if the generated file calls `setContentsMargins(4)` with a single integer, change it to `setContentsMargins(4, 4, 4, 4)` — the single-argument form is not accepted by current PySide6 Python bindings.
 - **Adding a new tab**: create a `*TabHandler` class in `tabs/`, add a new tab to `odmr_app_main.ui`, instantiate the handler in `ODMRMainWindow.__init__`, add `save_data()` call in `_on_save_all`.
+- **Background workers**: computationally intensive operations (ODMR fitting, field-map analysis) run in `QThread` subclasses so the UI stays responsive. See `AnalysisWorker` for the pattern.
 - **Camera tab isolation**: `odmr_main_window.py` uses `sys.modules` management to prevent the `odmr_app/state/` and `odmr_app/workers/` packages from shadowing `GUI/state/` and `GUI/workers/` when importing `camera_app.py`.
