@@ -107,3 +107,34 @@ def test_mag_result_contains_metadata():
     meta = completed[0].get("metadata", {})
     assert "mag_num_samples" in meta
     assert "mag_selected_indices" in meta
+
+
+def test_init_handles_includes_bin_x_bin_y():
+    """_init_handles must pass bin_x and bin_y in the camera config dict.
+
+    Previously these were missing, causing a KeyError: 'bin_x' from
+    initialize_system when starting a hardware magnetometry run.
+    """
+    from unittest.mock import patch, MagicMock
+    state = make_state()
+    state.mag_bin_x = 2
+    state.mag_bin_y = 4
+
+    captured = {}
+
+    def fake_init(simulation_mode, settings, logger=None):
+        captured.update(settings)
+        return {}
+
+    worker = MagnetometryWorker(state, simulation_mode=False)
+    with patch("qdm_gen.initialize_system", side_effect=fake_init):
+        try:
+            worker._init_handles()
+        except Exception:
+            pass  # may fail after init_system returns {} — that's fine
+
+    cam_cfg = captured.get("camera", {})
+    assert "bin_x" in cam_cfg, "camera config missing bin_x"
+    assert "bin_y" in cam_cfg, "camera config missing bin_y"
+    assert cam_cfg["bin_x"] == 2
+    assert cam_cfg["bin_y"] == 4

@@ -309,6 +309,8 @@ class MagnetometryWorker(QThread):
             "camera": {
                 "serial": state.odmr_camera_serial,
                 "exposure_time_us": state.mag_exposure_time_us,
+                "bin_x": state.mag_bin_x,
+                "bin_y": state.mag_bin_y,
             },
             "srs": {
                 "address": state.rf_address,
