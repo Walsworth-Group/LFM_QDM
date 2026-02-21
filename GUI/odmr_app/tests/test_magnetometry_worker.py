@@ -109,32 +109,35 @@ def test_mag_result_contains_metadata():
     assert "mag_selected_indices" in meta
 
 
-def test_init_handles_includes_bin_x_bin_y():
-    """_init_handles must pass bin_x and bin_y in the camera config dict.
+def test_init_handles_applies_hw_binning():
+    """_init_handles must apply state.mag_hw_bin_x/y as hardware camera binning.
 
-    Previously these were missing, causing a KeyError: 'bin_x' from
-    initialize_system when starting a hardware magnetometry run.
+    Previously the wrong state attributes (software binning mag_bin_x/y) were
+    used; now _init_handles reads mag_hw_bin_x/y and calls
+    BinningHorizontal.SetValue / BinningVertical.SetValue directly on the camera.
     """
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch, MagicMock, call
     state = make_state()
-    state.mag_bin_x = 2
-    state.mag_bin_y = 4
+    state.mag_hw_bin_x = 2
+    state.mag_hw_bin_y = 4
 
-    captured = {}
+    # Build a mock camera chain: basler.connect_and_open → camera_instance._camera
+    mock_raw_cam = MagicMock()
+    mock_raw_cam.BinningHorizontal = MagicMock()
+    mock_raw_cam.BinningVertical = MagicMock()
+    mock_raw_cam.BinningHorizontalMode = MagicMock()
+    mock_raw_cam.BinningVerticalMode = MagicMock()
 
-    def fake_init(simulation_mode, settings, logger=None):
-        captured.update(settings)
-        return {}
+    mock_cam_instance = MagicMock()
+    mock_cam_instance._camera = mock_raw_cam
+    # grab_frames returns a 2D array so ny/nx can be read
+    mock_cam_instance.grab_frames.return_value = np.zeros((300, 480))
 
     worker = MagnetometryWorker(state, simulation_mode=False)
-    with patch("qdm_gen.initialize_system", side_effect=fake_init):
-        try:
-            worker._init_handles()
-        except Exception:
-            pass  # may fail after init_system returns {} — that's fine
+    with patch("qdm_basler.basler.connect_and_open", return_value=mock_cam_instance):
+        handles = worker._init_handles()
 
-    cam_cfg = captured.get("camera", {})
-    assert "bin_x" in cam_cfg, "camera config missing bin_x"
-    assert "bin_y" in cam_cfg, "camera config missing bin_y"
-    assert cam_cfg["bin_x"] == 2
-    assert cam_cfg["bin_y"] == 4
+    mock_raw_cam.BinningHorizontal.SetValue.assert_called_once_with(2)
+    mock_raw_cam.BinningVertical.SetValue.assert_called_once_with(4)
+    assert handles['ny'] == 300
+    assert handles['nx'] == 480

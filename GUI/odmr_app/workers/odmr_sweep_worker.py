@@ -198,8 +198,8 @@ class ODMRSweepWorker(QThread):
                 'n_frames': self.state.sweep_n_frames_per_point,
                 'serial': self.state.odmr_camera_serial,
                 'exposure_time_us': self.state.sweep_exposure_time_us,
-                'bin_x': 1,
-                'bin_y': 1,
+                'bin_x': self.state.sweep_hw_bin_x,
+                'bin_y': self.state.sweep_hw_bin_y,
             },
             'srs': {
                 'address': self.state.rf_address,
@@ -268,6 +268,12 @@ class ODMRSweepWorker(QThread):
                     exposure_time_us=cam_cfg['exposure_time_us'],
                     verbose=False,
                 )
+                # Apply hardware binning (must be done before grabbing frames)
+                _cam = camera_instance._camera
+                _cam.BinningHorizontal.SetValue(cam_cfg['bin_x'])
+                _cam.BinningVertical.SetValue(cam_cfg['bin_y'])
+                _cam.BinningHorizontalMode.SetValue("Average")
+                _cam.BinningVerticalMode.SetValue("Average")
                 test_frame = camera_instance.grab_frames(n_frames=1, quiet=True)
                 ny, nx = test_frame.shape
                 settings = self._build_settings(ny, nx)

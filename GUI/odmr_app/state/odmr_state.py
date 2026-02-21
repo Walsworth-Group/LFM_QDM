@@ -99,8 +99,12 @@ class ODMRAppState(QObject):
         # Per-operation camera
         "sweep_exposure_time_us",
         "sweep_n_frames_per_point",
+        "sweep_hw_bin_x",
+        "sweep_hw_bin_y",
         "mag_exposure_time_us",
         "mag_n_frames_per_point",
+        "mag_hw_bin_x",
+        "mag_hw_bin_y",
         # Sweep
         "sweep_freq1_start_ghz",
         "sweep_freq1_end_ghz",
@@ -169,10 +173,14 @@ class ODMRAppState(QObject):
         # Per-operation camera settings (sweep)
         self._sweep_exposure_time_us: int = 10000
         self._sweep_n_frames_per_point: int = 5
+        self._sweep_hw_bin_x: int = 1   # hardware binning, X (columns)
+        self._sweep_hw_bin_y: int = 1   # hardware binning, Y (rows)
 
         # Per-operation camera settings (magnetometry)
         self._mag_exposure_time_us: int = 10000
         self._mag_n_frames_per_point: int = 5
+        self._mag_hw_bin_x: int = 1     # hardware binning, X (columns)
+        self._mag_hw_bin_y: int = 1     # hardware binning, Y (rows)
 
         # ------------------------------------------------------------------
         # Sweep subsystem
@@ -616,6 +624,24 @@ class ODMRAppState(QObject):
         self._sweep_n_frames_per_point = int(value)
 
     @property
+    def sweep_hw_bin_x(self) -> int:
+        """Hardware camera binning factor along X (columns) for ODMR sweeps."""
+        return self._sweep_hw_bin_x
+
+    @sweep_hw_bin_x.setter
+    def sweep_hw_bin_x(self, value: int):
+        self._sweep_hw_bin_x = int(value)
+
+    @property
+    def sweep_hw_bin_y(self) -> int:
+        """Hardware camera binning factor along Y (rows) for ODMR sweeps."""
+        return self._sweep_hw_bin_y
+
+    @sweep_hw_bin_y.setter
+    def sweep_hw_bin_y(self, value: int):
+        self._sweep_hw_bin_y = int(value)
+
+    @property
     def mag_exposure_time_us(self) -> int:
         """Camera exposure time in microseconds for magnetometry acquisition."""
         return self._mag_exposure_time_us
@@ -632,6 +658,24 @@ class ODMRAppState(QObject):
     @mag_n_frames_per_point.setter
     def mag_n_frames_per_point(self, value: int):
         self._mag_n_frames_per_point = int(value)
+
+    @property
+    def mag_hw_bin_x(self) -> int:
+        """Hardware camera binning factor along X (columns) for magnetometry."""
+        return self._mag_hw_bin_x
+
+    @mag_hw_bin_x.setter
+    def mag_hw_bin_x(self, value: int):
+        self._mag_hw_bin_x = int(value)
+
+    @property
+    def mag_hw_bin_y(self) -> int:
+        """Hardware camera binning factor along Y (rows) for magnetometry."""
+        return self._mag_hw_bin_y
+
+    @mag_hw_bin_y.setter
+    def mag_hw_bin_y(self, value: int):
+        self._mag_hw_bin_y = int(value)
 
     # ==================================================================
     # Save settings properties

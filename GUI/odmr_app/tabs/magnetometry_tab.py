@@ -68,6 +68,20 @@ class MagnetometryTabHandler:
         self._mag_frames_spin.setValue(state.mag_n_frames_per_point)
         form.addRow(lbl_frames, self._mag_frames_spin)
 
+        lbl_binx = QLabel("HW Bin X (cols):")
+        self._mag_hw_bin_x_spin = QSpinBox()
+        self._mag_hw_bin_x_spin.setMinimum(1)
+        self._mag_hw_bin_x_spin.setMaximum(8)
+        self._mag_hw_bin_x_spin.setValue(state.mag_hw_bin_x)
+        form.addRow(lbl_binx, self._mag_hw_bin_x_spin)
+
+        lbl_biny = QLabel("HW Bin Y (rows):")
+        self._mag_hw_bin_y_spin = QSpinBox()
+        self._mag_hw_bin_y_spin.setMinimum(1)
+        self._mag_hw_bin_y_spin.setMaximum(8)
+        self._mag_hw_bin_y_spin.setValue(state.mag_hw_bin_y)
+        form.addRow(lbl_biny, self._mag_hw_bin_y_spin)
+
         # Inject InflectionTableWidget
         self._inf_table = InflectionTableWidget()
         layout = QVBoxLayout(self.ui.mag_inflection_table_placeholder)
@@ -137,6 +151,10 @@ class MagnetometryTabHandler:
             lambda v: setattr(s, 'mag_exposure_time_us', v))
         self._mag_frames_spin.valueChanged.connect(
             lambda v: setattr(s, 'mag_n_frames_per_point', v))
+        self._mag_hw_bin_x_spin.valueChanged.connect(
+            lambda v: setattr(s, 'mag_hw_bin_x', v))
+        self._mag_hw_bin_y_spin.valueChanged.connect(
+            lambda v: setattr(s, 'mag_hw_bin_y', v))
 
         # Update spinboxes when "Send to Magnetometry" pushes sweep camera settings
         s.mag_camera_settings_pushed.connect(self._on_camera_settings_pushed)
@@ -163,6 +181,8 @@ class MagnetometryTabHandler:
         ui.mag_ref_freq_spin.setValue(s.sweep_ref_freq_ghz)
         self._mag_exposure_spin.setValue(s.mag_exposure_time_us)
         self._mag_frames_spin.setValue(s.mag_n_frames_per_point)
+        self._mag_hw_bin_x_spin.setValue(s.mag_hw_bin_x)
+        self._mag_hw_bin_y_spin.setValue(s.mag_hw_bin_y)
         ui.mag_stop_btn.setEnabled(False)
 
     @Slot(dict)

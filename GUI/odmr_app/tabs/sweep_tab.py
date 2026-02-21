@@ -68,6 +68,20 @@ class SweepTabHandler:
         self._sweep_frames_spin.setValue(state.sweep_n_frames_per_point)
         form.addRow(lbl_frames, self._sweep_frames_spin)
 
+        lbl_binx = QLabel("HW Bin X (cols):")
+        self._sweep_hw_bin_x_spin = QSpinBox()
+        self._sweep_hw_bin_x_spin.setMinimum(1)
+        self._sweep_hw_bin_x_spin.setMaximum(8)
+        self._sweep_hw_bin_x_spin.setValue(state.sweep_hw_bin_x)
+        form.addRow(lbl_binx, self._sweep_hw_bin_x_spin)
+
+        lbl_biny = QLabel("HW Bin Y (rows):")
+        self._sweep_hw_bin_y_spin = QSpinBox()
+        self._sweep_hw_bin_y_spin.setMinimum(1)
+        self._sweep_hw_bin_y_spin.setMaximum(8)
+        self._sweep_hw_bin_y_spin.setValue(state.sweep_hw_bin_y)
+        form.addRow(lbl_biny, self._sweep_hw_bin_y_spin)
+
         # Inject pyqtgraph plot widgets
         self._plot1 = pg.PlotWidget(title="Transition 1 (m=0\u2192\u22121)")
         self._plot2 = pg.PlotWidget(title="Transition 2 (m=0\u2192+1)")
@@ -144,6 +158,10 @@ class SweepTabHandler:
             lambda v: setattr(s, 'sweep_exposure_time_us', v))
         self._sweep_frames_spin.valueChanged.connect(
             lambda v: setattr(s, 'sweep_n_frames_per_point', v))
+        self._sweep_hw_bin_x_spin.valueChanged.connect(
+            lambda v: setattr(s, 'sweep_hw_bin_x', v))
+        self._sweep_hw_bin_y_spin.valueChanged.connect(
+            lambda v: setattr(s, 'sweep_hw_bin_y', v))
 
         # Buttons
         ui.sweep_start_btn.clicked.connect(self._on_start)
@@ -170,6 +188,8 @@ class SweepTabHandler:
         ui.sweep_n_lorentz.setValue(s.sweep_n_lorentz)
         self._sweep_exposure_spin.setValue(s.sweep_exposure_time_us)
         self._sweep_frames_spin.setValue(s.sweep_n_frames_per_point)
+        self._sweep_hw_bin_x_spin.setValue(s.sweep_hw_bin_x)
+        self._sweep_hw_bin_y_spin.setValue(s.sweep_hw_bin_y)
         ui.sweep_stop_btn.setEnabled(False)
         ui.sweep_send_to_mag_btn.setEnabled(False)
 

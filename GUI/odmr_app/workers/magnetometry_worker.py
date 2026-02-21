@@ -171,15 +171,16 @@ class MagnetometryWorker(QThread):
         # Build frequency configuration from inflection result
         freq_list, slope_list, parity_list, baseline_list = self._get_freq_config()
 
-        # Determine image shape
-        ny, nx = self._get_image_shape()
+        # Initialise hardware handles first so we can read the true image shape
+        # from the camera (shape depends on hardware binning settings).
+        handles = self._init_handles()
+
+        # Determine image shape from handles (simulation returns fixed small shape)
+        ny, nx = handles.get('ny', 10), handles.get('nx', 10)
 
         # Allocate output arrays
         stability_cube = np.zeros((num_samples, ny, nx), dtype=np.float32)
         running_sum = np.zeros((ny, nx), dtype=np.float64)
-
-        # Initialise hardware handles (empty dict for simulation)
-        handles = self._init_handles()
 
         samples_done = 0
 
@@ -190,7 +191,8 @@ class MagnetometryWorker(QThread):
                         break
 
                     sample = self._acquire_sample(
-                        handles, freq_list, slope_list, parity_list, baseline_list
+                        handles, freq_list, slope_list, parity_list, baseline_list,
+                        ny, nx,
                     )
 
                     stability_cube[samples_done] = sample
@@ -266,58 +268,44 @@ class MagnetometryWorker(QThread):
         )
         return freq_list, slope_list, parity_list, baseline_list
 
-    def _get_image_shape(self):
-        """
-        Return the (ny, nx) image shape.
-
-        In simulation mode, returns a small fixed shape ``(10, 10)`` for fast
-        test execution.  In hardware mode, returns ``(480, 270)`` as a default
-        placeholder; the actual shape comes from the camera at acquisition time.
-
-        Returns
-        -------
-        tuple of int
-            ``(ny, nx)``
-        """
-        if self.simulation_mode:
-            return (10, 10)
-        # Hardware default — actual shape is determined by camera configuration
-        return (480, 270)
-
     def _init_handles(self) -> dict:
         """
         Initialise hardware handles for the measurement.
 
-        In simulation mode, returns an empty dict (no hardware required).
-        In hardware mode, calls ``qdm.initialize_system`` to open the camera
-        and signal generator connections.
+        In simulation mode, returns a minimal dict with a fixed small image
+        shape suitable for testing.
+
+        In hardware mode, opens the Basler camera, applies hardware binning
+        from ``state.mag_hw_bin_x`` / ``state.mag_hw_bin_y``, grabs one test
+        frame to determine the actual image dimensions, and returns a handles
+        dict.  The SG384 is **not** opened here — ``_acquire_sample`` uses
+        ``state.sg384_controller``, which is already connected.
 
         Returns
         -------
         dict
-            Hardware handles dict.  In hardware mode contains at minimum
-            ``'camera_instance'`` and ``'sg384'``.
+            Keys: ``'camera_instance'`` (hardware mode only), ``'ny'``, ``'nx'``.
         """
         if self.simulation_mode:
-            return {}
+            return {'ny': 10, 'nx': 10}
 
         state = self.state
-        settings_dict = {
-            "settling_time": state.perf_mw_settling_time_s,
-            "n_frames": state.mag_n_frames_per_point,
-            "simulation_mode": False,
-            "camera": {
-                "serial": state.odmr_camera_serial,
-                "exposure_time_us": state.mag_exposure_time_us,
-                "bin_x": state.mag_bin_x,
-                "bin_y": state.mag_bin_y,
-            },
-            "srs": {
-                "address": state.rf_address,
-                "rf_power": state.rf_amplitude_dbm,
-            },
-        }
-        return qdm.initialize_system(False, settings_dict, logger=None)
+        from qdm_basler import basler  # noqa: PLC0415
+        camera_instance = basler.connect_and_open(
+            choice=state.odmr_camera_serial,
+            exposure_time_us=state.mag_exposure_time_us,
+            verbose=False,
+        )
+        # Apply hardware binning before grabbing the first frame
+        _cam = camera_instance._camera
+        _cam.BinningHorizontal.SetValue(state.mag_hw_bin_x)
+        _cam.BinningVertical.SetValue(state.mag_hw_bin_y)
+        _cam.BinningHorizontalMode.SetValue("Average")
+        _cam.BinningVerticalMode.SetValue("Average")
+
+        test_frame = camera_instance.grab_frames(n_frames=1, quiet=True)
+        ny, nx = test_frame.shape
+        return {'camera_instance': camera_instance, 'ny': ny, 'nx': nx}
 
     def _close_handles(self, handles: dict) -> None:
         """
@@ -347,6 +335,8 @@ class MagnetometryWorker(QThread):
         slope_list: list,
         parity_list: list,
         baseline_list: list,
+        ny: int = 10,
+        nx: int = 10,
     ) -> np.ndarray:
         """
         Acquire a single magnetometry sample.
@@ -383,7 +373,6 @@ class MagnetometryWorker(QThread):
             # Small sleep so that 20-sample run takes ~1 s total, allowing the
             # test_mag_stop_saves_partial test to interrupt after ~0.3 s.
             time.sleep(0.05)
-            ny, nx = self._get_image_shape()
             return np.random.normal(0, 1e-4, (ny, nx)).astype(np.float32)
 
         return qdm.measure_multi_point(
