@@ -160,6 +160,115 @@ The app auto-saves all settings to `config/odmr_app_config.json` on close. This 
 
 ---
 
+## ODMRAppState property reference
+
+`state/odmr_state.py` — `ODMRAppState(QObject)`
+
+### Plain attributes (no signal, set directly)
+
+| Attribute | Type | Purpose |
+|---|---|---|
+| `sg384_controller` | `SG384Controller \| None` | Hardware handle; set to `MagicMock()` in tests |
+| `sg384_lock` | `threading.Lock` | Serialize access across RF polling + acquisition workers |
+| `camera_state` | `CameraState \| None` | Set by `_embed_camera_tab()` at startup |
+| `shared_state` | `ExperimentState \| None` | Shared laser/PID state from launcher |
+| `_simulation_mode` | `bool` | Set `True` before starting any worker to use synthetic data |
+
+### Signals
+
+| Signal | Args | Emitted when |
+|---|---|---|
+| `rf_connection_changed` | `bool` | `rf_is_connected` changes |
+| `rf_frequency_changed` | `float` | `rf_current_freq_ghz` changes |
+| `sweep_running_changed` | `bool` | `sweep_is_running` changes |
+| `sweep_progress` | `int, int` | Each frequency step completes (current, total) |
+| `sweep_spectrum_updated` | `object, object, object, object, int` | Live spectrum data (fl1, sp1, fl2, sp2, sweep_num) |
+| `sweep_completed` | `dict` | Sweep finishes; dict has `inflection_points`, `inflection_slopes`, `inflection_contrasts`, sweep data |
+| `mag_running_changed` | `bool` | `mag_is_running` changes |
+| `mag_progress` | `int, int` | Each magnetometry sample (current, total) |
+| `mag_sample_acquired` | `int, object` | Live sample (sample_idx, field_map_gauss) |
+| `mag_completed` | `dict` | Magnetometry finishes; dict has `stability_cube`, `freq_list`, `slope_list`, etc. |
+| `analysis_completed` | `dict` | Field map analysis finishes |
+| `camera_mode_changed` | `str` | Camera mode changes; value is `"idle"`, `"streaming"`, or `"acquiring"` — **a string, not a `CameraMode` enum** |
+| `mag_camera_settings_pushed` | `int, int` | "Send to Magnetometry" clicked (exposure_us, n_frames) |
+
+### Properties with signals (configurable, persisted in JSON)
+
+**RF**
+
+| Property | Type | Default | Signal |
+|---|---|---|---|
+| `rf_is_connected` | `bool` | `False` | `rf_connection_changed` |
+| `rf_current_freq_ghz` | `float` | `2.870` | `rf_frequency_changed` |
+| `rf_amplitude_dbm` | `float` | `-10.0` | — |
+| `rf_address` | `str` | `"192.168.1.100"` | — |
+
+**Camera (per-operation)**
+
+| Property | Type | Default |
+|---|---|---|
+| `sweep_exposure_time_us` | `int` | `10000` |
+| `sweep_n_frames_per_point` | `int` | `5` |
+| `mag_exposure_time_us` | `int` | `10000` |
+| `mag_n_frames_per_point` | `int` | `5` |
+
+**Sweep**
+
+| Property | Type | Default |
+|---|---|---|
+| `sweep_freq1_start_ghz` | `float` | `2.516` |
+| `sweep_freq1_end_ghz` | `float` | `2.528` |
+| `sweep_freq1_steps` | `int` | `201` |
+| `sweep_freq2_start_ghz` | `float` | `3.210` |
+| `sweep_freq2_end_ghz` | `float` | `3.220` |
+| `sweep_freq2_steps` | `int` | `201` |
+| `sweep_ref_freq_ghz` | `float` | `1.0` |
+| `sweep_num_sweeps` | `int` | `1` |
+| `sweep_n_lorentz` | `int` | `2` |
+| `sweep_is_running` | `bool` | `False` | ← emits `sweep_running_changed` |
+| `sweep_inflection_result` | `dict \| None` | `None` | Result from sweep; has `inflection_points` (8,), `inflection_slopes` (8,), `inflection_contrasts` (8,) |
+
+**Magnetometry**
+
+| Property | Type | Default |
+|---|---|---|
+| `mag_num_samples` | `int` | `200` |
+| `mag_bin_x` | `int` | `1` |
+| `mag_bin_y` | `int` | `1` |
+| `mag_selected_indices` | `list[int]` | `[1,4,0,5,8,0]` | Inflection point indices; 0 = reference |
+| `mag_selected_parities` | `list[int]` | `[1,1,0,-1,-1,0]` | +1 signal / -1 inverted / 0 reference |
+| `mag_is_running` | `bool` | `False` | ← emits `mag_running_changed` |
+| `mag_stability_result` | `dict \| None` | `None` | Result dict from last magnetometry run |
+
+**Analysis**
+
+| Property | Type | Default |
+|---|---|---|
+| `analysis_denoise_method` | `str` | `"gaussian"` | Options: `"none"`, `"gaussian"`, `"tv"`, `"wavelet"`, `"nlm"`, `"bilateral"` |
+| `analysis_gaussian_sigma` | `float` | `15.0` |
+| `analysis_outlier_sigma` | `float` | `4.0` |
+| `analysis_reference_mode` | `str` | `"global_mean"` |
+
+**Camera mode (ODMR app)**
+
+| Property | Type | Default |
+|---|---|---|
+| `odmr_camera_mode` | `CameraMode` | `CameraMode.IDLE` | Accepts `CameraMode` enum or string; emits `camera_mode_changed(str)` |
+| `odmr_camera_serial` | `str` | `""` |
+
+### Business logic methods
+
+| Method | Returns | Purpose |
+|---|---|---|
+| `try_start_sweep()` | `bool` | `True` if mag is not running (mutually exclusive) |
+| `try_start_magnetometry()` | `bool` | `True` if sweep is not running |
+| `build_save_filename(component, prefix, ts)` | `str` | `"{prefix}_{component}_{timestamp}"` filename stem |
+| `build_metadata()` | `dict` | All experimental parameters as flat dict for embedding in .npz |
+| `get_config()` | `dict` | All persistable properties (for JSON save) |
+| `load_config(dict)` | — | Restore from JSON; unknown keys silently ignored |
+
+---
+
 ## Running tests
 
 ```bash
