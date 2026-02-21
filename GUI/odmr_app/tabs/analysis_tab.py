@@ -42,11 +42,20 @@ class AnalysisTabHandler:
             ['none', 'gaussian', 'tv', 'wavelet', 'nlm', 'bilateral'])
         self.ui.analysis_reference_combo.addItems(['global_mean', 'roi'])
 
-        # Inject FieldMapDisplayWidget
+        # Inject FieldMapDisplayWidget + "Auto Range All" button
         self._field_display = FieldMapDisplayWidget()
         layout = QVBoxLayout(self.ui.analysis_display_placeholder)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._field_display)
+        layout.addWidget(self._field_display, stretch=1)
+
+        from PySide6.QtWidgets import QHBoxLayout, QPushButton
+        btn_row = QHBoxLayout()
+        auto_all_btn = QPushButton("Auto Range (All Panels)")
+        auto_all_btn.setToolTip("Reset colormap range in all three panels to data min/max")
+        auto_all_btn.clicked.connect(self._field_display.auto_range_all)
+        btn_row.addStretch()
+        btn_row.addWidget(auto_all_btn)
+        layout.addLayout(btn_row)
 
         self._connect_widgets()
         self._sync_from_state()
@@ -69,6 +78,8 @@ class AnalysisTabHandler:
             lambda t: setattr(s, 'analysis_reference_mode', t))
 
         ui.analysis_reanalyze_btn.clicked.connect(self._on_reanalyze)
+        ui.analysis_save_npz_btn.clicked.connect(lambda: self.state.status_message.emit("Saving field map..."))
+        ui.analysis_save_png_btn.clicked.connect(lambda: self.state.status_message.emit("Saving field map figure..."))
         ui.analysis_save_npz_btn.clicked.connect(self._on_save_npz)
         ui.analysis_save_png_btn.clicked.connect(self._on_save_png)
 
@@ -108,6 +119,7 @@ class AnalysisTabHandler:
         if result is None:
             QMessageBox.information(None, "No Data", "Run a measurement first.")
             return
+        self.state.status_message.emit("Reanalyzing field map...")
         self._run_analysis(result["stability_cube"])
 
     def _run_analysis(self, stability_cube: np.ndarray):
@@ -142,10 +154,13 @@ class AnalysisTabHandler:
 
         proc = result.get("field_map_gauss_processed")
         if proc is not None:
-            self.ui.analysis_stats_label.setText(
+            stats = (
                 f"Mean: {np.nanmean(proc):+.4f} G    "
                 f"Std: {np.nanstd(proc):.4f} G    "
-                f"Range: [{np.nanmin(proc):.4f}, {np.nanmax(proc):.4f}] G")
+                f"Range: [{np.nanmin(proc):.4f}, {np.nanmax(proc):.4f}] G"
+            )
+            self.ui.analysis_stats_label.setText(stats)
+            self.state.status_message.emit(f"Analysis done.  {stats}")
 
     def save_data(self, global_prefix=""):
         """Called by Save All. Returns True if data was saved."""
@@ -175,7 +190,9 @@ class AnalysisTabHandler:
             if v is not None:
                 save_dict[k] = v
         save_dict["metadata"] = str(self.state.build_metadata())
-        np.savez_compressed(save_dir / f"{stem}.npz", **save_dict)
+        save_path = save_dir / f"{stem}.npz"
+        np.savez_compressed(save_path, **save_dict)
+        self.state.status_message.emit(f"Saved field map: {save_path.name}")
 
     @Slot()
     def _on_save_png(self, global_prefix=""):

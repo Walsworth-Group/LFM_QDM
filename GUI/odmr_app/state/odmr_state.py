@@ -86,6 +86,9 @@ class ODMRAppState(QObject):
     # Camera settings pushed from sweep to magnetometry
     mag_camera_settings_pushed = Signal(int, int)   # (exposure_us, n_frames)
 
+    # UI status log — short one-line message for the status bar / log label
+    status_message = Signal(str)
+
     # ------------------------------------------------------------------
     # Config keys (persisted via get_config / load_config)
     # ------------------------------------------------------------------

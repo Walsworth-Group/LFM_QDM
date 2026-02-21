@@ -45,6 +45,7 @@ class SweepTabHandler:
         self._set_camera_mode = set_camera_mode_fn
         self._worker = None
         self._last_plot_update = 0.0
+        self._sweep_start_time = None
 
         self.ui = Ui_sweep_tab_content()
         self.ui.setupUi(tab_widget)
@@ -221,6 +222,7 @@ class SweepTabHandler:
     def _start_sweep_worker(self):
         """Create and start the ODMRSweepWorker thread."""
         self._set_camera_mode(CameraMode.ACQUIRING)
+        self._sweep_start_time = time.monotonic()
         simulation = getattr(self.state, '_simulation_mode', False)
         self._worker = ODMRSweepWorker(self.state, simulation_mode=simulation)
         self._worker.sweep_progress.connect(self._on_progress)
@@ -228,12 +230,19 @@ class SweepTabHandler:
         self._worker.sweep_completed.connect(self._on_sweep_completed)
         self._worker.sweep_failed.connect(self._on_sweep_failed)
         self._worker.start()
+        n1 = self.state.sweep_freq1_steps
+        n2 = self.state.sweep_freq2_steps
+        total = (n1 + n2) * max(1, self.state.sweep_num_sweeps)
+        self.state.status_message.emit(
+            f"Running ODMR sweep...  (0/{total} steps)"
+        )
 
     @Slot()
     def _on_stop(self):
         """Request the sweep worker to stop."""
         if self._worker and self._worker.isRunning():
             self._worker.stop()
+            self.state.status_message.emit("Stop requested — finishing current step...")
 
     @Slot(bool)
     def _on_running_changed(self, running):
@@ -242,13 +251,30 @@ class SweepTabHandler:
         self.ui.sweep_stop_btn.setEnabled(running)
         if not running:
             self._set_camera_mode(CameraMode.IDLE)
+            self._sweep_start_time = None
 
     @Slot(int, int)
     def _on_progress(self, current, total):
-        """Update progress bar and step counter label."""
+        """Update progress bar, timing label, and status message."""
         self.ui.sweep_progress_bar.setMaximum(total)
         self.ui.sweep_progress_bar.setValue(current)
-        self.ui.sweep_time_label.setText(f"Step {current}/{total}")
+
+        t0 = getattr(self, '_sweep_start_time', None)
+        elapsed = (time.monotonic() - t0) if t0 else 0.0
+        if current > 0:
+            per_step = elapsed / current
+            remaining = per_step * (total - current)
+            timing_str = (
+                f"Step {current}/{total} | {elapsed:.0f}s elapsed | "
+                f"~{remaining:.0f}s remaining"
+            )
+        else:
+            timing_str = f"Step 0/{total}"
+
+        self.ui.sweep_time_label.setText(timing_str)
+        self.state.status_message.emit(
+            f"Running ODMR sweep...  {current}/{total} steps"
+        )
 
     @Slot(object, object, object, object, int)
     def _on_spectrum_updated(self, fl1, sp1, fl2, sp2, sweep_num):
@@ -264,6 +290,11 @@ class SweepTabHandler:
     @Slot(dict)
     def _on_sweep_completed(self, result):
         """Handle sweep completion: update state, plots, table, and buttons."""
+        elapsed = (time.monotonic() - self._sweep_start_time) if self._sweep_start_time else 0.0
+        n_pts = len(result.get("inflection_points", []))
+        self.state.status_message.emit(
+            f"Sweep complete: {n_pts} inflection points found  ({elapsed:.1f}s)"
+        )
         # Store in state and emit state-level signal for other tabs
         self.state.sweep_inflection_result = result
         self.state.sweep_completed.emit(result)
@@ -329,6 +360,7 @@ class SweepTabHandler:
     def _on_sweep_failed(self, msg):
         """Handle sweep failure by resetting camera mode and showing error."""
         self._set_camera_mode(CameraMode.IDLE)
+        self.state.status_message.emit(f"Sweep failed: {msg[:80]}")
         QMessageBox.critical(None, "Sweep Failed", msg)
 
     def save_data(self, global_prefix=""):

@@ -1,13 +1,14 @@
 """Magnetometry tab handler."""
 
 import sys
+import time
 import numpy as np
 from pathlib import Path
 
 from PySide6.QtCore import Slot
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QFileDialog, QMessageBox, QInputDialog,
-    QLabel, QSpinBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QInputDialog,
+    QLabel, QSpinBox, QComboBox, QDoubleSpinBox, QPushButton,
 )
 import pyqtgraph as pg
 
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from state.odmr_state import ODMRAppState, CameraMode
 from workers.magnetometry_worker import MagnetometryWorker
 from widgets.inflection_table import InflectionTableWidget
+from widgets.field_map_display import _make_rdbu_colormap, _ColormapSideBar
 from ui.ui_odmr_magnetometry_tab import Ui_magnetometry_tab_content
 
 
@@ -46,6 +48,8 @@ class MagnetometryTabHandler:
         self._worker = None
         self._presets = {}
         self._presets_dir = Path(__file__).parent.parent / "config" / "presets"
+        self._start_time = None     # wall-clock time when acquisition began
+        self._last_analysis_result = None   # most recent analysis result dict
 
         self.ui = Ui_magnetometry_tab_content()
         self.ui.setupUi(tab_widget)
@@ -53,7 +57,7 @@ class MagnetometryTabHandler:
         # --- Programmatically add magnetometry-specific camera controls ---
         form = self.ui.formLayout   # mag_params_group form layout
 
-        lbl_exp = QLabel("Exposure time (µs):")
+        lbl_exp = QLabel("Exposure time (\u00b5s):")
         self._mag_exposure_spin = QSpinBox()
         self._mag_exposure_spin.setMinimum(100)
         self._mag_exposure_spin.setMaximum(500000)
@@ -82,19 +86,50 @@ class MagnetometryTabHandler:
         self._mag_hw_bin_y_spin.setValue(state.mag_hw_bin_y)
         form.addRow(lbl_biny, self._mag_hw_bin_y_spin)
 
-        # Inject InflectionTableWidget
+        # --- Inject InflectionTableWidget ---
         self._inf_table = InflectionTableWidget()
         layout = QVBoxLayout(self.ui.mag_inflection_table_placeholder)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._inf_table)
 
-        # Inject live preview pyqtgraph ImageView
+        # --- Build live preview area with display mode selector + colorbar ---
+        preview_container = self.ui.mag_preview_widget
+        preview_layout = QVBoxLayout(preview_container)
+        preview_layout.setContentsMargins(4, 4, 4, 4)
+        preview_layout.setSpacing(4)
+
+        # Display mode selector row
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Display:"))
+        self._display_mode_combo = QComboBox()
+        self._display_mode_combo.addItems(
+            ["Live Preview", "Raw", "Denoised", "Processed"])
+        self._display_mode_combo.setToolTip(
+            "Choose what to display: live cumulative average or one of the "
+            "three analysis outputs (computed after measurement completes).")
+        mode_row.addWidget(self._display_mode_combo)
+        mode_row.addStretch()
+        preview_layout.addLayout(mode_row)
+
+        # ImageView + colorbar side by side
+        img_row = QHBoxLayout()
+        img_row.setSpacing(4)
         self._preview_view = pg.ImageView()
         self._preview_view.ui.roiBtn.hide()
         self._preview_view.ui.menuBtn.hide()
-        layout2 = QVBoxLayout(self.ui.mag_preview_widget)
-        layout2.setContentsMargins(0, 0, 0, 0)
-        layout2.addWidget(self._preview_view)
+        self._preview_view.ui.histogram.hide()   # remove the blue histogram bar
+        self._preview_view.setColorMap(_make_rdbu_colormap())
+        img_row.addWidget(self._preview_view, stretch=1)
+
+        self._preview_colorbar = _ColormapSideBar(self._preview_view)
+        img_row.addWidget(self._preview_colorbar)
+
+        preview_layout.addLayout(img_row, stretch=1)
+
+        # Connect display mode changes
+        self._display_mode_combo.currentTextChanged.connect(self._on_display_mode_changed)
+        # Also update display when new analysis arrives
+        self.state.analysis_completed.connect(self._on_analysis_result_for_display)
 
         self._load_presets()
         self._connect_widgets()
@@ -107,6 +142,10 @@ class MagnetometryTabHandler:
 
         # Listen for future sweep completions via state signal
         self.state.sweep_completed.connect(self._on_sweep_completed)
+
+    # ------------------------------------------------------------------
+    # Preset management helpers
+    # ------------------------------------------------------------------
 
     def _load_presets(self):
         """Load preset files from the presets directory."""
@@ -123,6 +162,10 @@ class MagnetometryTabHandler:
         """Repopulate the preset combo box from the presets dict."""
         self.ui.mag_preset_combo.clear()
         self.ui.mag_preset_combo.addItems(sorted(self._presets.keys()))
+
+    # ------------------------------------------------------------------
+    # Widget wiring
+    # ------------------------------------------------------------------
 
     def _connect_widgets(self):
         """Connect UI widgets to state attributes and slot methods."""
@@ -185,6 +228,10 @@ class MagnetometryTabHandler:
         self._mag_hw_bin_y_spin.setValue(s.mag_hw_bin_y)
         ui.mag_stop_btn.setEnabled(False)
 
+    # ------------------------------------------------------------------
+    # Slots
+    # ------------------------------------------------------------------
+
     @Slot(dict)
     def _on_sweep_completed(self, result):
         """Auto-populate inflection table when sweep finishes."""
@@ -195,6 +242,47 @@ class MagnetometryTabHandler:
         """Update spinboxes when 'Send to Magnetometry' is clicked in Sweep tab."""
         self._mag_exposure_spin.setValue(exposure_us)
         self._mag_frames_spin.setValue(n_frames)
+
+    # ------------------------------------------------------------------
+    # Display mode
+    # ------------------------------------------------------------------
+
+    @Slot(str)
+    def _on_display_mode_changed(self, mode: str):
+        """Switch the preview image to the selected mode."""
+        if mode == "Live Preview":
+            # Nothing to do — live preview updates on sample_acquired
+            return
+        if self._last_analysis_result is not None:
+            self._show_analysis_map(self._last_analysis_result, mode)
+
+    @Slot(dict)
+    def _on_analysis_result_for_display(self, result: dict):
+        """Cache new analysis result and refresh display if not in Live Preview mode."""
+        self._last_analysis_result = result
+        mode = self._display_mode_combo.currentText()
+        if mode != "Live Preview":
+            self._show_analysis_map(result, mode)
+
+    def _show_analysis_map(self, result: dict, mode: str):
+        """Display the named analysis map in the preview view."""
+        key_map = {
+            "Raw":       "field_map_gauss_raw",
+            "Denoised":  "field_map_gauss_denoised",
+            "Processed": "field_map_gauss_processed",
+        }
+        key = key_map.get(mode)
+        if key is None:
+            return
+        data = result.get(key)
+        if data is None:
+            return
+        finite = data[np.isfinite(data)]
+        if len(finite) == 0:
+            return
+        self._preview_view.setImage(data.T, autoLevels=True)
+        self._preview_view.setColorMap(_make_rdbu_colormap())
+        self._preview_colorbar.auto_range()
 
     # ------------------------------------------------------------------
     # Preset management
@@ -295,6 +383,7 @@ class MagnetometryTabHandler:
     def _start_mag_worker(self):
         """Create and start the MagnetometryWorker thread."""
         self._set_camera_mode(CameraMode.ACQUIRING)
+        self._start_time = time.monotonic()
         simulation = getattr(self.state, '_simulation_mode', False)
         self._worker = MagnetometryWorker(self.state, simulation_mode=simulation)
         self._worker.mag_progress.connect(self._on_progress)
@@ -302,12 +391,16 @@ class MagnetometryTabHandler:
         self._worker.mag_completed.connect(self._on_mag_completed)
         self._worker.mag_failed.connect(self._on_mag_failed)
         self._worker.start()
+        n = self.state.mag_num_samples
+        self.state.status_message.emit(
+            f"Acquiring magnetometry data...  (0/{n} samples)")
 
     @Slot()
     def _on_stop(self):
         """Request the magnetometry worker to stop."""
         if self._worker and self._worker.isRunning():
             self._worker.stop()
+            self.state.status_message.emit("Stop requested — finishing current sample...")
 
     @Slot(bool)
     def _on_running_changed(self, running):
@@ -316,29 +409,54 @@ class MagnetometryTabHandler:
         self.ui.mag_stop_btn.setEnabled(running)
         if not running:
             self._set_camera_mode(CameraMode.IDLE)
+            self._start_time = None
 
     @Slot(int, int)
     def _on_progress(self, current, total):
-        """Update progress bar and sample count label."""
+        """Update progress bar, timing label, and status message."""
         self.ui.mag_progress_bar.setMaximum(total)
         self.ui.mag_progress_bar.setValue(current)
-        self.ui.mag_time_label.setText(f"{current}/{total} samples")
+
+        elapsed = time.monotonic() - self._start_time if self._start_time else 0.0
+        if current > 0:
+            per_sample = elapsed / current
+            remaining = per_sample * (total - current)
+            timing_str = (
+                f"{current}/{total} | {elapsed:.0f}s elapsed | "
+                f"~{remaining:.0f}s remaining | {per_sample:.2f}s/sample"
+            )
+        else:
+            timing_str = f"0/{total}"
+
+        self.ui.mag_time_label.setText(timing_str)
+        self.state.status_message.emit(
+            f"Acquiring magnetometry data...  {current}/{total} samples"
+        )
 
     @Slot(int, object)
     def _on_sample_acquired(self, n, field_gauss):
-        """Update live cumulative average preview."""
-        self._preview_view.setImage(field_gauss.T, autoLevels=True)
+        """Update live cumulative average preview if in Live Preview mode."""
+        if self._display_mode_combo.currentText() == "Live Preview":
+            self._preview_view.setImage(field_gauss.T, autoLevels=True)
+            self._preview_view.setColorMap(_make_rdbu_colormap())
+            self._preview_colorbar.auto_range()
 
     @Slot(dict)
     def _on_mag_completed(self, result):
         """Store result in state and emit state-level completed signal."""
+        n = result.get("num_samples_acquired", 0)
+        elapsed = time.monotonic() - self._start_time if self._start_time else 0.0
         self.state.mag_stability_result = result
         self.state.mag_completed.emit(result)
+        self.state.status_message.emit(
+            f"Magnetometry complete: {n} samples in {elapsed:.1f}s"
+        )
 
     @Slot(str)
     def _on_mag_failed(self, msg):
         """Handle measurement failure by resetting camera mode and showing error."""
         self._set_camera_mode(CameraMode.IDLE)
+        self.state.status_message.emit(f"Magnetometry failed: {msg[:80]}")
         QMessageBox.critical(None, "Measurement Failed", msg)
 
     # ------------------------------------------------------------------
@@ -368,8 +486,9 @@ class MagnetometryTabHandler:
             user_prefix=combined)
         save_dir = Path(self.state.save_base_path) / self.state.save_subfolder
         save_dir.mkdir(parents=True, exist_ok=True)
+        save_path = save_dir / f"{stem}.npz"
         np.savez_compressed(
-            save_dir / f"{stem}.npz",
+            save_path,
             stability_cube=result["stability_cube"],
             freq_list=np.array(result["freq_list"]),
             slope_list=np.array(result["slope_list"]),
@@ -377,6 +496,7 @@ class MagnetometryTabHandler:
             baseline_list=np.array(result["baseline_list"]),
             metadata=str(result.get("metadata", {})),
         )
+        self.state.status_message.emit(f"Saved magnetometry data: {save_path.name}")
 
     @Slot()
     def _on_save_png(self, global_prefix=""):
