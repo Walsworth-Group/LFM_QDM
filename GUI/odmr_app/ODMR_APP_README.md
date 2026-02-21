@@ -64,7 +64,11 @@ GUI/odmr_app/
     ├── test_odmr_state.py
     ├── test_sg384_worker.py
     ├── test_odmr_sweep_worker.py
-    └── test_magnetometry_worker.py
+    ├── test_magnetometry_worker.py
+    ├── test_inflection_table.py
+    ├── test_field_map_display.py
+    ├── test_smoke.py              Startup/import smoke tests (no hardware, <2s)
+    └── test_gui_integration.py   pytest-qt button-click tests
 ```
 
 ---
@@ -163,11 +167,20 @@ cd GUI/odmr_app
 python -m pytest tests/ -v
 ```
 
-31 tests covering ODMRAppState, SG384Worker, ODMRSweepWorker, and MagnetometryWorker. All tests use `simulation_mode=True` and `MagicMock` — no hardware contact.
+49 tests across three layers:
 
-Key test scenarios:
-- ODMRSweepWorker: per-step progress emission, early stop saves partial data, sweep stop mid-transition averages correctly
-- MagnetometryWorker: stop mid-run saves partial stability cube with correct sample count
+| File | Layer | What it covers |
+|---|---|---|
+| `test_odmr_state.py` | Unit | State signals, config roundtrip, mutual exclusion |
+| `test_sg384_worker.py` | Unit | RF polling, lock backoff, command queue |
+| `test_odmr_sweep_worker.py` | Unit | Per-step progress, early stop mid-T1, lock acquisition |
+| `test_magnetometry_worker.py` | Unit | Progress, partial save on stop, metadata |
+| `test_inflection_table.py` | Unit | Table population, selection, preset save/load |
+| `test_field_map_display.py` | Unit | Widget create/update/clear, colormap range |
+| `test_smoke.py` | Smoke | Import and instantiate all key classes; catches startup crashes |
+| `test_gui_integration.py` | Integration | Button clicks → state signals; full sweep in simulation |
+
+All tests use `simulation_mode=True` and `MagicMock` — no hardware contact. Requires `pytest` and `pytest-qt`.
 
 ---
 
