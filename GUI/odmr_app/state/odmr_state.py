@@ -83,6 +83,9 @@ class ODMRAppState(QObject):
     # Camera mode
     camera_mode_changed = Signal(str)
 
+    # Camera settings pushed from sweep to magnetometry
+    mag_camera_settings_pushed = Signal(int, int)   # (exposure_us, n_frames)
+
     # ------------------------------------------------------------------
     # Config keys (persisted via get_config / load_config)
     # ------------------------------------------------------------------
@@ -93,6 +96,11 @@ class ODMRAppState(QObject):
         "rf_current_freq_ghz",
         "rf_amplitude_dbm",
         "rf_address",
+        # Per-operation camera
+        "sweep_exposure_time_us",
+        "sweep_n_frames_per_point",
+        "mag_exposure_time_us",
+        "mag_n_frames_per_point",
         # Sweep
         "sweep_freq1_start_ghz",
         "sweep_freq1_end_ghz",
@@ -128,7 +136,6 @@ class ODMRAppState(QObject):
         "perf_rf_poll_interval_s",
         "perf_ui_plot_throttle_fps",
         "perf_mw_settling_time_s",
-        "perf_camera_flush_frames",
         "perf_n_frames_per_point",
         "perf_worker_loop_sleep_s",
         "perf_sweep_emit_every_n",
@@ -157,6 +164,15 @@ class ODMRAppState(QObject):
         self._rf_current_freq_ghz: float = 2.870  # NV zero-field resonance (GHz)
         self._rf_amplitude_dbm: float = -10.0
         self._rf_address: str = "192.168.1.100"
+
+        # ------------------------------------------------------------------
+        # Per-operation camera settings (sweep)
+        self._sweep_exposure_time_us: int = 10000
+        self._sweep_n_frames_per_point: int = 5
+
+        # Per-operation camera settings (magnetometry)
+        self._mag_exposure_time_us: int = 10000
+        self._mag_n_frames_per_point: int = 5
 
         # ------------------------------------------------------------------
         # Sweep subsystem
@@ -222,7 +238,6 @@ class ODMRAppState(QObject):
         self._perf_rf_poll_interval_s: float = 0.5
         self._perf_ui_plot_throttle_fps: float = 10.0
         self._perf_mw_settling_time_s: float = 0.010
-        self._perf_camera_flush_frames: int = 1
         self._perf_n_frames_per_point: int = 5
         self._perf_worker_loop_sleep_s: float = 0.005
         self._perf_sweep_emit_every_n: int = 1
@@ -567,7 +582,7 @@ class ODMRAppState(QObject):
         if not isinstance(value, CameraMode):
             value = CameraMode(value)
         self._odmr_camera_mode = value
-        self.camera_mode_changed.emit(str(value))
+        self.camera_mode_changed.emit(value.value)   # emit "idle"/"streaming"/"acquiring"
 
     @property
     def odmr_camera_serial(self) -> str:
@@ -577,6 +592,46 @@ class ODMRAppState(QObject):
     @odmr_camera_serial.setter
     def odmr_camera_serial(self, value: str):
         self._odmr_camera_serial = str(value)
+
+    # ==================================================================
+    # Per-operation camera settings properties
+    # ==================================================================
+
+    @property
+    def sweep_exposure_time_us(self) -> int:
+        """Camera exposure time in microseconds for ODMR sweep acquisition."""
+        return self._sweep_exposure_time_us
+
+    @sweep_exposure_time_us.setter
+    def sweep_exposure_time_us(self, value: int):
+        self._sweep_exposure_time_us = int(value)
+
+    @property
+    def sweep_n_frames_per_point(self) -> int:
+        """Number of camera frames averaged per frequency point during sweeps."""
+        return self._sweep_n_frames_per_point
+
+    @sweep_n_frames_per_point.setter
+    def sweep_n_frames_per_point(self, value: int):
+        self._sweep_n_frames_per_point = int(value)
+
+    @property
+    def mag_exposure_time_us(self) -> int:
+        """Camera exposure time in microseconds for magnetometry acquisition."""
+        return self._mag_exposure_time_us
+
+    @mag_exposure_time_us.setter
+    def mag_exposure_time_us(self, value: int):
+        self._mag_exposure_time_us = int(value)
+
+    @property
+    def mag_n_frames_per_point(self) -> int:
+        """Number of camera frames averaged per point during magnetometry."""
+        return self._mag_n_frames_per_point
+
+    @mag_n_frames_per_point.setter
+    def mag_n_frames_per_point(self, value: int):
+        self._mag_n_frames_per_point = int(value)
 
     # ==================================================================
     # Save settings properties
@@ -675,15 +730,6 @@ class ODMRAppState(QObject):
     @perf_mw_settling_time_s.setter
     def perf_mw_settling_time_s(self, value: float):
         self._perf_mw_settling_time_s = float(value)
-
-    @property
-    def perf_camera_flush_frames(self) -> int:
-        """Number of camera frames to discard after frequency step (flush)."""
-        return self._perf_camera_flush_frames
-
-    @perf_camera_flush_frames.setter
-    def perf_camera_flush_frames(self, value: int):
-        self._perf_camera_flush_frames = int(value)
 
     @property
     def perf_n_frames_per_point(self) -> int:
@@ -833,7 +879,6 @@ class ODMRAppState(QObject):
             "mag_selected_parities": list(self._mag_selected_parities),
             "perf_mw_settling_time_s": self._perf_mw_settling_time_s,
             "perf_n_frames_per_point": self._perf_n_frames_per_point,
-            "perf_camera_flush_frames": self._perf_camera_flush_frames,
         }
 
         if self._sweep_inflection_result:

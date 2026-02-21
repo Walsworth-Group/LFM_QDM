@@ -42,6 +42,7 @@ class SensitivityTabHandler:
         self._sens_view = pg.ImageView()
         self._sens_view.ui.roiBtn.hide()
         self._sens_view.ui.menuBtn.hide()
+        self._sens_view.ui.histogram.hide()
         sens_layout = QVBoxLayout(self.ui.sensitivity_map_widget)
         sens_layout.setContentsMargins(0, 0, 0, 0)
         sens_layout.addWidget(self._sens_view)
@@ -138,21 +139,22 @@ class SensitivityTabHandler:
         except Exception as e:
             QMessageBox.critical(None, "Allan Variance Error", str(e))
 
-    def save_data(self):
+    def save_data(self, global_prefix=""):
         """Called by Save All. Returns True if data was saved."""
         if self._sensitivity_result is None:
             return False
-        self._on_save_npz()
+        self._on_save_npz(global_prefix=global_prefix)
+        self._on_save_png(global_prefix=global_prefix)
         return True
 
     @Slot()
-    def _on_save_npz(self):
+    def _on_save_npz(self, global_prefix=""):
         """Save sensitivity result arrays to a compressed .npz file."""
         if self._sensitivity_result is None:
             return
-        stem = self.state.build_save_filename(
-            "sensitivity",
-            user_prefix=self.ui.sensitivity_prefix_edit.text())
+        tab_prefix = self.ui.sensitivity_prefix_edit.text().strip()
+        combined = "_".join(p for p in [global_prefix, tab_prefix] if p)
+        stem = self.state.build_save_filename("sensitivity", user_prefix=combined)
         save_dir = Path(self.state.save_base_path) / self.state.save_subfolder
         save_dir.mkdir(parents=True, exist_ok=True)
         save_dict = {"metadata": str(self.state.build_metadata())}
@@ -162,11 +164,11 @@ class SensitivityTabHandler:
         np.savez_compressed(save_dir / f"{stem}.npz", **save_dict)
 
     @Slot()
-    def _on_save_png(self):
+    def _on_save_png(self, global_prefix=""):
         """Export the sensitivity map and Allan deviation plot as PNG images."""
-        stem = self.state.build_save_filename(
-            "sensitivity",
-            user_prefix=self.ui.sensitivity_prefix_edit.text())
+        tab_prefix = self.ui.sensitivity_prefix_edit.text().strip()
+        combined = "_".join(p for p in [global_prefix, tab_prefix] if p)
+        stem = self.state.build_save_filename("sensitivity", user_prefix=combined)
         save_dir = Path(self.state.save_base_path) / self.state.save_subfolder
         save_dir.mkdir(parents=True, exist_ok=True)
         exporter = pg.exporters.ImageExporter(self._sens_view.imageItem)

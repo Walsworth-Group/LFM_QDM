@@ -20,7 +20,7 @@ from pathlib import Path
 from datetime import datetime
 
 from PySide6.QtWidgets import (
-    QMainWindow, QVBoxLayout, QMessageBox, QFileDialog,
+    QMainWindow, QVBoxLayout, QMessageBox, QFileDialog, QLabel, QLineEdit,
 )
 from PySide6.QtCore import Slot, QTimer
 from PySide6.QtWidgets import QApplication
@@ -91,9 +91,16 @@ class ODMRMainWindow(QMainWindow):
         # -- RF worker (created on connect) ---------------------------------
         self.sg384_worker = None
 
+        # -- Camera reconnect tracking --------------------------------------
+        # Set True when _stop_streaming_if_needed disconnects the camera so
+        # _on_camera_mode_changed can reconnect it when acquisition finishes.
+        self._camera_was_connected = False
+
         # -- Build UI -------------------------------------------------------
         self.ui = Ui_ODMRMainWindow()
         self.ui.setupUi(self)
+        # The generated UI file omits menubar.addMenu(); add it here.
+        self.ui.menubar.addMenu(self.ui.menu_file)
 
         # -- Sub-components -------------------------------------------------
         self._embed_camera_tab()
@@ -155,15 +162,27 @@ class ODMRMainWindow(QMainWindow):
                              or k.startswith('workers.')]
         _saved_modules = {k: sys.modules.pop(k) for k in _conflicting_keys}
 
-        # Ensure GUI/ is first on sys.path so camera_app's imports resolve
-        # to GUI/state/ and GUI/workers/.
+        # Temporarily promote GUI/ to front of sys.path so camera_app's
+        # imports resolve to GUI/state/ and GUI/workers/ rather than
+        # odmr_app/state/.  Save and restore sys.path so that subsequent
+        # imports inside odmr_app (e.g. tabs/) still find odmr_app/state/.
         gui_root = str(_GUI_ROOT)
-        if gui_root not in sys.path:
-            sys.path.insert(0, gui_root)
+        _saved_path = sys.path[:]
+        sys.path.insert(0, gui_root)
 
         try:
             import camera_app as _cam_module  # noqa: PLC0415
         finally:
+            # Restore sys.path so odmr_app/state/ remains highest priority.
+            sys.path[:] = _saved_path
+            # Remove any state/workers entries that camera_app may have cached
+            # pointing to GUI/state/ or GUI/workers/.  odmr_app's own tabs
+            # need to re-discover odmr_app/state/ on their next import.
+            for _k in list(sys.modules.keys()):
+                if (_k in ('state', 'workers')
+                        or _k.startswith('state.')
+                        or _k.startswith('workers.')):
+                    sys.modules.pop(_k, None)
             # Restore odmr_app packages under their qualified names so that
             # any code in this module referencing ODMRAppState etc. still works.
             for _key, _mod in _saved_modules.items():
@@ -179,7 +198,11 @@ class ODMRMainWindow(QMainWindow):
         if self.state.odmr_camera_serial:
             camera_state.camera_serial_number = self.state.odmr_camera_serial
 
-        self._camera_widget = CameraTabWidget(state=camera_state, parent=self)
+        # Use a separate config file so ODMR-app camera settings don't
+        # overwrite the standalone camera-app config.
+        _odmr_cam_cfg = _ODMR_APP_ROOT / "config" / "odmr_camera_config.json"
+        self._camera_widget = CameraTabWidget(
+            state=camera_state, config_file=_odmr_cam_cfg, parent=self)
 
         # Store reference so other parts of the app can reach it
         self.state.camera_state = camera_state
@@ -350,6 +373,11 @@ class ODMRMainWindow(QMainWindow):
         elif mode == CameraMode.IDLE:
             if hasattr(widget, 'start_button'):
                 widget.start_button.setEnabled(True)
+            # Reconnect camera if we disconnected it for the ODMR acquisition.
+            if self._camera_was_connected:
+                self._camera_was_connected = False
+                if hasattr(widget, 'on_connect_camera'):
+                    widget.on_connect_camera()
 
     @Slot(bool)
     def _on_camera_streaming_changed(self, is_streaming):
@@ -363,23 +391,37 @@ class ODMRMainWindow(QMainWindow):
 
     def _stop_streaming_if_needed(self):
         """
-        Stop camera streaming if it is currently active.
+        Stop streaming and fully disconnect the camera so that a sweep or
+        magnetometry worker can open an exclusive camera connection.
+
+        The camera is always disconnected (not just paused) before returning
+        so that ``basler.connect_and_open`` succeeds in the worker thread.
+        ``_camera_was_connected`` is set so ``_on_camera_mode_changed`` can
+        reconnect the camera once acquisition finishes.
 
         Returns
         -------
         bool
-            True if streaming was already stopped (acquisition can proceed),
-            False if streaming was running and a stop was requested (caller
-            should wait for the stream to finish).
+            Always ``True`` — the disconnect is synchronous.
         """
         camera_state = self.state.camera_state
+        widget = self._camera_widget
+
         if camera_state is None:
             return True
+
+        # Stop frame acquisition first (stops pylon grabbing).
         if getattr(camera_state, 'camera_is_streaming', False):
-            widget = self._camera_widget
             if hasattr(widget, 'on_stop_streaming'):
                 widget.on_stop_streaming()
-            return False
+
+        # Fully stop the CameraWorker thread and close the pylon connection so
+        # the sweep/magnetometry worker can open its own exclusive connection.
+        if getattr(camera_state, 'camera_is_connected', False):
+            if hasattr(widget, 'on_disconnect_camera'):
+                widget.on_disconnect_camera()
+            self._camera_was_connected = True
+
         return True
 
     # ======================================================================
@@ -406,6 +448,18 @@ class ODMRMainWindow(QMainWindow):
             lambda v: setattr(self.state, 'save_timestamp_enabled', v)
         )
 
+        # Global prefix — injected programmatically into the save bar layout.
+        # Prepended to all filenames when "Save All" is clicked.
+        lbl = QLabel("Global prefix:")
+        self._global_prefix_edit = QLineEdit()
+        self._global_prefix_edit.setPlaceholderText("(optional)")
+        self._global_prefix_edit.setMaximumWidth(160)
+        # Insert before the Save All button (last item in the hbox)
+        hbox = ui.save_hbox
+        idx = hbox.indexOf(ui.save_all_btn)
+        hbox.insertWidget(idx, lbl)
+        hbox.insertWidget(idx + 1, self._global_prefix_edit)
+
     @Slot()
     def _on_browse_save_path(self):
         """Open directory chooser and update save path."""
@@ -422,6 +476,7 @@ class ODMRMainWindow(QMainWindow):
         """Trigger save on all tabs that have data."""
         saved = []
         errors = []
+        global_prefix = self._global_prefix_edit.text().strip()
         handlers = [
             ("Sweep",        getattr(self, '_sweep_handler', None)),
             ("Magnetometry", getattr(self, '_mag_handler', None)),
@@ -432,7 +487,7 @@ class ODMRMainWindow(QMainWindow):
             if handler is None:
                 continue
             try:
-                if handler.save_data():
+                if handler.save_data(global_prefix=global_prefix):
                     saved.append(name)
             except Exception as e:
                 errors.append(f"{name}: {e}")

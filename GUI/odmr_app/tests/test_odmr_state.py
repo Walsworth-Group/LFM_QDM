@@ -67,7 +67,7 @@ def test_camera_mode_signal_emitted():
     state.odmr_camera_mode = CameraMode.STREAMING
 
     assert len(received) == 1
-    assert received[0] == str(CameraMode.STREAMING)
+    assert received[0] == CameraMode.STREAMING.value   # "streaming"
 
 
 def test_rf_frequency_signal_emitted():

@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import Slot
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QFileDialog, QMessageBox, QInputDialog,
+    QLabel, QSpinBox,
 )
 import pyqtgraph as pg
 
@@ -48,6 +49,24 @@ class MagnetometryTabHandler:
 
         self.ui = Ui_magnetometry_tab_content()
         self.ui.setupUi(tab_widget)
+
+        # --- Programmatically add magnetometry-specific camera controls ---
+        form = self.ui.formLayout   # mag_params_group form layout
+
+        lbl_exp = QLabel("Exposure time (µs):")
+        self._mag_exposure_spin = QSpinBox()
+        self._mag_exposure_spin.setMinimum(100)
+        self._mag_exposure_spin.setMaximum(500000)
+        self._mag_exposure_spin.setSingleStep(1000)
+        self._mag_exposure_spin.setValue(state.mag_exposure_time_us)
+        form.addRow(lbl_exp, self._mag_exposure_spin)
+
+        lbl_frames = QLabel("Frames per point:")
+        self._mag_frames_spin = QSpinBox()
+        self._mag_frames_spin.setMinimum(1)
+        self._mag_frames_spin.setMaximum(100)
+        self._mag_frames_spin.setValue(state.mag_n_frames_per_point)
+        form.addRow(lbl_frames, self._mag_frames_spin)
 
         # Inject InflectionTableWidget
         self._inf_table = InflectionTableWidget()
@@ -114,6 +133,13 @@ class MagnetometryTabHandler:
             lambda v: setattr(s, 'perf_live_avg_update_interval_samples', v))
         ui.mag_ref_freq_spin.valueChanged.connect(
             lambda v: setattr(s, 'sweep_ref_freq_ghz', v))
+        self._mag_exposure_spin.valueChanged.connect(
+            lambda v: setattr(s, 'mag_exposure_time_us', v))
+        self._mag_frames_spin.valueChanged.connect(
+            lambda v: setattr(s, 'mag_n_frames_per_point', v))
+
+        # Update spinboxes when "Send to Magnetometry" pushes sweep camera settings
+        s.mag_camera_settings_pushed.connect(self._on_camera_settings_pushed)
 
         # Start/Stop
         ui.mag_start_btn.clicked.connect(self._on_start)
@@ -135,12 +161,20 @@ class MagnetometryTabHandler:
         ui.mag_num_samples_spin.setValue(s.mag_num_samples)
         ui.mag_live_interval_spin.setValue(s.perf_live_avg_update_interval_samples)
         ui.mag_ref_freq_spin.setValue(s.sweep_ref_freq_ghz)
+        self._mag_exposure_spin.setValue(s.mag_exposure_time_us)
+        self._mag_frames_spin.setValue(s.mag_n_frames_per_point)
         ui.mag_stop_btn.setEnabled(False)
 
     @Slot(dict)
     def _on_sweep_completed(self, result):
         """Auto-populate inflection table when sweep finishes."""
         self._inf_table.populate_from_sweep_result(result)
+
+    @Slot(int, int)
+    def _on_camera_settings_pushed(self, exposure_us: int, n_frames: int):
+        """Update spinboxes when 'Send to Magnetometry' is clicked in Sweep tab."""
+        self._mag_exposure_spin.setValue(exposure_us)
+        self._mag_frames_spin.setValue(n_frames)
 
     # ------------------------------------------------------------------
     # Preset management
@@ -291,25 +325,27 @@ class MagnetometryTabHandler:
     # Save
     # ------------------------------------------------------------------
 
-    def save_data(self):
+    def save_data(self, global_prefix=""):
         """Called by Save All. Returns True if data was saved."""
         result = self.state.mag_stability_result
         if result is None:
             return False
-        self._on_save_npz()
-        self._on_save_png()
+        self._on_save_npz(global_prefix=global_prefix)
+        self._on_save_png(global_prefix=global_prefix)
         return True
 
     @Slot()
-    def _on_save_npz(self):
+    def _on_save_npz(self, global_prefix=""):
         """Save magnetometry stability result to a compressed .npz file."""
         result = self.state.mag_stability_result
         if result is None:
             QMessageBox.information(None, "No Data", "Run a measurement first.")
             return
+        tab_prefix = self.ui.mag_prefix_edit.text().strip()
+        combined = "_".join(p for p in [global_prefix, tab_prefix] if p)
         stem = self.state.build_save_filename(
             "multipoint_stability",
-            user_prefix=self.ui.mag_prefix_edit.text())
+            user_prefix=combined)
         save_dir = Path(self.state.save_base_path) / self.state.save_subfolder
         save_dir.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
@@ -323,11 +359,13 @@ class MagnetometryTabHandler:
         )
 
     @Slot()
-    def _on_save_png(self):
+    def _on_save_png(self, global_prefix=""):
         """Save the current live preview image as PNG."""
+        tab_prefix = self.ui.mag_prefix_edit.text().strip()
+        combined = "_".join(p for p in [global_prefix, tab_prefix] if p)
         stem = self.state.build_save_filename(
             "multipoint_stability",
-            user_prefix=self.ui.mag_prefix_edit.text())
+            user_prefix=combined)
         save_dir = Path(self.state.save_base_path) / self.state.save_subfolder
         save_dir.mkdir(parents=True, exist_ok=True)
         exporter = pg.exporters.ImageExporter(self._preview_view.imageItem)

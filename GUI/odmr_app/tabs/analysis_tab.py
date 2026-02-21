@@ -147,24 +147,25 @@ class AnalysisTabHandler:
                 f"Std: {np.nanstd(proc):.4f} G    "
                 f"Range: [{np.nanmin(proc):.4f}, {np.nanmax(proc):.4f}] G")
 
-    def save_data(self):
+    def save_data(self, global_prefix=""):
         """Called by Save All. Returns True if data was saved."""
         result = self.state.analysis_field_map_result
         if result is None:
             return False
-        self._on_save_npz()
-        self._on_save_png()
+        self._on_save_npz(global_prefix=global_prefix)
+        self._on_save_png(global_prefix=global_prefix)
         return True
 
     @Slot()
-    def _on_save_npz(self):
+    def _on_save_npz(self, global_prefix=""):
         """Save field map analysis result to a compressed .npz file."""
         result = self.state.analysis_field_map_result
         if result is None:
             QMessageBox.information(None, "No Data", "Run analysis first.")
             return
-        stem = self.state.build_save_filename(
-            "field_map", user_prefix=self.ui.analysis_prefix_edit.text())
+        tab_prefix = self.ui.analysis_prefix_edit.text().strip()
+        combined = "_".join(p for p in [global_prefix, tab_prefix] if p)
+        stem = self.state.build_save_filename("field_map", user_prefix=combined)
         save_dir = Path(self.state.save_base_path) / self.state.save_subfolder
         save_dir.mkdir(parents=True, exist_ok=True)
         save_dict = {}
@@ -177,13 +178,14 @@ class AnalysisTabHandler:
         np.savez_compressed(save_dir / f"{stem}.npz", **save_dict)
 
     @Slot()
-    def _on_save_png(self):
+    def _on_save_png(self, global_prefix=""):
         """Save the analysis figure as a PNG file."""
         result = self.state.analysis_field_map_result
         if result is None:
             return
-        stem = self.state.build_save_filename(
-            "field_map", user_prefix=self.ui.analysis_prefix_edit.text())
+        tab_prefix = self.ui.analysis_prefix_edit.text().strip()
+        combined = "_".join(p for p in [global_prefix, tab_prefix] if p)
+        stem = self.state.build_save_filename("field_map", user_prefix=combined)
         save_dir = Path(self.state.save_base_path) / self.state.save_subfolder
         save_dir.mkdir(parents=True, exist_ok=True)
         fig = result.get("figure")

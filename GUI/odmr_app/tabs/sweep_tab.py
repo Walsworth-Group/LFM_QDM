@@ -6,7 +6,10 @@ import numpy as np
 from pathlib import Path
 
 from PySide6.QtCore import Slot, QTimer, Qt
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QMessageBox, QTableWidgetItem
+from PySide6.QtWidgets import (
+    QWidget, QHBoxLayout, QMessageBox, QTableWidgetItem,
+    QLabel, QSpinBox,
+)
 import pyqtgraph as pg
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -46,6 +49,25 @@ class SweepTabHandler:
         self.ui = Ui_sweep_tab_content()
         self.ui.setupUi(tab_widget)
 
+        # --- Programmatically add sweep-specific camera controls ---
+        # Append exposure time and frames per point to the sweep params form layout.
+        form = self.ui.formLayout2  # sweep_params_group form
+
+        lbl_exp = QLabel("Exposure time (µs):")
+        self._sweep_exposure_spin = QSpinBox()
+        self._sweep_exposure_spin.setMinimum(100)
+        self._sweep_exposure_spin.setMaximum(500000)
+        self._sweep_exposure_spin.setSingleStep(1000)
+        self._sweep_exposure_spin.setValue(state.sweep_exposure_time_us)
+        form.addRow(lbl_exp, self._sweep_exposure_spin)
+
+        lbl_frames = QLabel("Frames per point:")
+        self._sweep_frames_spin = QSpinBox()
+        self._sweep_frames_spin.setMinimum(1)
+        self._sweep_frames_spin.setMaximum(100)
+        self._sweep_frames_spin.setValue(state.sweep_n_frames_per_point)
+        form.addRow(lbl_frames, self._sweep_frames_spin)
+
         # Inject pyqtgraph plot widgets
         self._plot1 = pg.PlotWidget(title="Transition 1 (m=0\u2192\u22121)")
         self._plot2 = pg.PlotWidget(title="Transition 2 (m=0\u2192+1)")
@@ -57,10 +79,18 @@ class SweepTabHandler:
         plot_layout.addWidget(self._plot1)
         plot_layout.addWidget(self._plot2)
 
-        self._curve1 = self._plot1.plot(pen='c', symbol=None)
-        self._curve2 = self._plot2.plot(pen='y', symbol=None)
-        self._fit_curve1 = self._plot1.plot(pen=pg.mkPen('r', width=2))
-        self._fit_curve2 = self._plot2.plot(pen=pg.mkPen('r', width=2))
+        # Data: dark purple dots (no connecting line), fit: solid black line
+        _purple = (80, 0, 120)
+        self._curve1 = self._plot1.plot(
+            pen=None, symbol='o',
+            symbolBrush=pg.mkBrush(_purple), symbolPen=pg.mkPen(None),
+            symbolSize=5)
+        self._curve2 = self._plot2.plot(
+            pen=None, symbol='o',
+            symbolBrush=pg.mkBrush(_purple), symbolPen=pg.mkPen(None),
+            symbolSize=5)
+        self._fit_curve1 = self._plot1.plot(pen=pg.mkPen('k', width=2))
+        self._fit_curve2 = self._plot2.plot(pen=pg.mkPen('k', width=2))
 
         # Inflection point vertical lines (4 per plot)
         dash_pen1 = pg.mkPen('g', style=Qt.PenStyle.DashLine)
@@ -110,6 +140,10 @@ class SweepTabHandler:
             lambda v: setattr(s, 'sweep_num_sweeps', v))
         ui.sweep_n_lorentz.valueChanged.connect(
             lambda v: setattr(s, 'sweep_n_lorentz', v))
+        self._sweep_exposure_spin.valueChanged.connect(
+            lambda v: setattr(s, 'sweep_exposure_time_us', v))
+        self._sweep_frames_spin.valueChanged.connect(
+            lambda v: setattr(s, 'sweep_n_frames_per_point', v))
 
         # Buttons
         ui.sweep_start_btn.clicked.connect(self._on_start)
@@ -134,6 +168,8 @@ class SweepTabHandler:
         ui.sweep_ref_freq.setValue(s.sweep_ref_freq_ghz)
         ui.sweep_num_sweeps.setValue(s.sweep_num_sweeps)
         ui.sweep_n_lorentz.setValue(s.sweep_n_lorentz)
+        self._sweep_exposure_spin.setValue(s.sweep_exposure_time_us)
+        self._sweep_frames_spin.setValue(s.sweep_n_frames_per_point)
         ui.sweep_stop_btn.setEnabled(False)
         ui.sweep_send_to_mag_btn.setEnabled(False)
 
@@ -189,10 +225,10 @@ class SweepTabHandler:
 
     @Slot(int, int)
     def _on_progress(self, current, total):
-        """Update progress bar and time label."""
+        """Update progress bar and step counter label."""
         self.ui.sweep_progress_bar.setMaximum(total)
         self.ui.sweep_progress_bar.setValue(current)
-        self.ui.sweep_time_label.setText(f"{current}/{total} sweeps")
+        self.ui.sweep_time_label.setText(f"Step {current}/{total}")
 
     @Slot(object, object, object, object, int)
     def _on_spectrum_updated(self, fl1, sp1, fl2, sp2, sweep_num):
@@ -217,6 +253,14 @@ class SweepTabHandler:
             result["freqlist1"], result["spectrum1"],
             result["freqlist2"], result["spectrum2"],
             self.state.sweep_num_sweeps)
+
+        # Overlay Lorentzian fit curves
+        if result.get("x_fit1") is not None and result.get("y_fit1") is not None:
+            self._fit_curve1.setData(
+                np.asarray(result["x_fit1"]), np.asarray(result["y_fit1"]))
+        if result.get("x_fit2") is not None and result.get("y_fit2") is not None:
+            self._fit_curve2.setData(
+                np.asarray(result["x_fit2"]), np.asarray(result["y_fit2"]))
 
         # Show inflection point markers
         pts = result["inflection_points"]
@@ -247,7 +291,16 @@ class SweepTabHandler:
 
     @Slot()
     def _on_send_to_mag(self):
-        """Visually acknowledge that sweep result was sent to Magnetometry tab."""
+        """Copy sweep camera settings to magnetometry and give visual feedback."""
+        # Push exposure time and frames per point to magnetometry state.
+        # The mag_camera_settings_pushed signal lets the magnetometry tab
+        # update its own spinboxes without needing a direct reference.
+        exp_us = self.state.sweep_exposure_time_us
+        n_frames = self.state.sweep_n_frames_per_point
+        self.state.mag_exposure_time_us = exp_us
+        self.state.mag_n_frames_per_point = n_frames
+        self.state.mag_camera_settings_pushed.emit(exp_us, n_frames)
+
         self.ui.sweep_send_to_mag_btn.setText("\u2713 Sent to Magnetometry")
         QTimer.singleShot(2000,
             lambda: self.ui.sweep_send_to_mag_btn.setText("Send to Magnetometry"))
@@ -258,24 +311,26 @@ class SweepTabHandler:
         self._set_camera_mode(CameraMode.IDLE)
         QMessageBox.critical(None, "Sweep Failed", msg)
 
-    def save_data(self):
+    def save_data(self, global_prefix=""):
         """Called by Save All. Returns True if data was saved."""
         if self.state.sweep_inflection_result is None:
             return False
-        self._on_save_npz()
-        self._on_save_png()
+        self._on_save_npz(global_prefix=global_prefix)
+        self._on_save_png(global_prefix=global_prefix)
         return True
 
     @Slot()
-    def _on_save_npz(self):
+    def _on_save_npz(self, global_prefix=""):
         """Save sweep result to a compressed .npz file."""
         result = self.state.sweep_inflection_result
         if result is None:
             QMessageBox.information(None, "No Data", "Run a sweep first.")
             return
+        tab_prefix = self.ui.sweep_prefix_edit.text().strip()
+        combined = "_".join(p for p in [global_prefix, tab_prefix] if p)
         stem = self.state.build_save_filename(
             "odmr_freq_sweep",
-            user_prefix=self.ui.sweep_prefix_edit.text())
+            user_prefix=combined)
         save_dir = Path(self.state.save_base_path) / self.state.save_subfolder
         save_dir.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
@@ -291,14 +346,16 @@ class SweepTabHandler:
         )
 
     @Slot()
-    def _on_save_png(self):
+    def _on_save_png(self, global_prefix=""):
         """Export sweep plots as PNG images."""
         result = self.state.sweep_inflection_result
         if result is None:
             return
+        tab_prefix = self.ui.sweep_prefix_edit.text().strip()
+        combined = "_".join(p for p in [global_prefix, tab_prefix] if p)
         stem = self.state.build_save_filename(
             "odmr_freq_sweep",
-            user_prefix=self.ui.sweep_prefix_edit.text())
+            user_prefix=combined)
         save_dir = Path(self.state.save_base_path) / self.state.save_subfolder
         save_dir.mkdir(parents=True, exist_ok=True)
         exporter1 = pg.exporters.ImageExporter(self._plot1.plotItem)

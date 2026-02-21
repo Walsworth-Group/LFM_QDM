@@ -47,6 +47,7 @@ class _FieldPanel(QWidget):
         self._img_view = pg.ImageView(self)
         self._img_view.ui.roiBtn.hide()
         self._img_view.ui.menuBtn.hide()
+        self._img_view.ui.histogram.hide()
         layout.addWidget(self._img_view, stretch=1)
 
         self._hover_label = QLabel("Hover for pixel value")

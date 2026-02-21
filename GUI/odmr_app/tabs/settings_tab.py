@@ -37,6 +37,10 @@ class SettingsTabHandler:
         self.state = state
         self.ui_settings = Ui_settings_tab_content()
         self.ui_settings.setupUi(tab_widget)
+        # perf_flush_frames_spin is vestigial: flush_buffer() is called
+        # unconditionally in qdm_gen, so this setting has no effect.
+        self.ui_settings.perf_flush_frames_spin.hide()
+        self.ui_settings.label5.hide()
         self._connect_widgets()
         self._sync_from_state()
 
@@ -62,14 +66,13 @@ class SettingsTabHandler:
 
         # Performance / timing spinboxes
         perf_bindings = [
-            (ui.perf_rf_poll_spin,      'perf_rf_poll_interval_s'),
-            (ui.perf_settling_spin,     'perf_mw_settling_time_s'),
-            (ui.perf_flush_frames_spin, 'perf_camera_flush_frames'),
-            (ui.perf_n_frames_spin,     'perf_n_frames_per_point'),
-            (ui.perf_loop_sleep_spin,   'perf_worker_loop_sleep_s'),
-            (ui.perf_emit_every_spin,   'perf_sweep_emit_every_n'),
-            (ui.perf_live_avg_spin,     'perf_live_avg_update_interval_samples'),
-            (ui.perf_autosave_spin,     'perf_autosave_interval_samples'),
+            (ui.perf_rf_poll_spin,    'perf_rf_poll_interval_s'),
+            (ui.perf_settling_spin,   'perf_mw_settling_time_s'),
+            (ui.perf_n_frames_spin,   'perf_n_frames_per_point'),
+            (ui.perf_loop_sleep_spin, 'perf_worker_loop_sleep_s'),
+            (ui.perf_emit_every_spin, 'perf_sweep_emit_every_n'),
+            (ui.perf_live_avg_spin,   'perf_live_avg_update_interval_samples'),
+            (ui.perf_autosave_spin,   'perf_autosave_interval_samples'),
         ]
         for widget, attr in perf_bindings:
             widget.valueChanged.connect(lambda v, a=attr: setattr(s, a, v))
@@ -98,14 +101,13 @@ class SettingsTabHandler:
 
         # Performance spinboxes
         _perf_sync = [
-            (ui.perf_rf_poll_spin,      s.perf_rf_poll_interval_s),
-            (ui.perf_settling_spin,     s.perf_mw_settling_time_s),
-            (ui.perf_flush_frames_spin, s.perf_camera_flush_frames),
-            (ui.perf_n_frames_spin,     s.perf_n_frames_per_point),
-            (ui.perf_loop_sleep_spin,   s.perf_worker_loop_sleep_s),
-            (ui.perf_emit_every_spin,   s.perf_sweep_emit_every_n),
-            (ui.perf_live_avg_spin,     s.perf_live_avg_update_interval_samples),
-            (ui.perf_autosave_spin,     s.perf_autosave_interval_samples),
+            (ui.perf_rf_poll_spin,    s.perf_rf_poll_interval_s),
+            (ui.perf_settling_spin,   s.perf_mw_settling_time_s),
+            (ui.perf_n_frames_spin,   s.perf_n_frames_per_point),
+            (ui.perf_loop_sleep_spin, s.perf_worker_loop_sleep_s),
+            (ui.perf_emit_every_spin, s.perf_sweep_emit_every_n),
+            (ui.perf_live_avg_spin,   s.perf_live_avg_update_interval_samples),
+            (ui.perf_autosave_spin,   s.perf_autosave_interval_samples),
         ]
         for widget, value in _perf_sync:
             widget.blockSignals(True)

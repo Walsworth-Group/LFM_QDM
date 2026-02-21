@@ -77,13 +77,16 @@ Embeds the existing `CameraTabWidget` (from `camera_app.py`) for live Basler cam
 ### ODMR Sweep tab
 Runs a two-transition ODMR frequency sweep (`identify_multi_transition_inflection_points` equivalent):
 - Configurable frequency range for each NV transition (lower m=0→−1, upper m=0→+1)
-- Live spectrum update during acquisition
+- **Sweep-specific camera settings**: exposure time (µs) and frames per point, separate from magnetometry
+- Progress bar shows per-frequency-step progress; Stop button takes effect within one step
+- Live spectrum update during acquisition (dark purple dots, black Lorentzian fit overlay)
 - After completion: Lorentzian fitting, 8 inflection point extraction, table populated
-- "Send to Magnetometry" button triggers auto-population of the Magnetometry tab
+- "Send to Magnetometry" button: copies sweep camera settings → magnetometry tab and triggers auto-population of inflection table
 - Save: `.npz` (raw spectra + inflection data) and `.png` (spectrum plots)
 
 ### Magnetometry tab
 Runs multi-point differential magnetometry (`run_multi_point_stability_measurement` equivalent):
+- **Magnetometry-specific camera settings**: exposure time (µs) and frames per point, independent of sweep settings
 - **InflectionTableWidget**: shows all 8 inflection points; user selects which to use and their parity (+1 signal, −1 signal, 0 reference)
 - **Preset management**: save/load/delete named presets in `config/presets/*.json`; `default_4pt.json` is included (outer 4 points, alternating parity)
 - **Point file I/O**: export/import inflection point data to JSON for session restore
@@ -107,10 +110,11 @@ Computes magnetometer sensitivity (`analyze_stability_data`) and Allan deviation
 - Save: `.npz` (sensitivity arrays) and `.png` (map + Allan plot)
 
 ### Settings tab
-Configures all instrument and performance parameters:
+Configures instrument and performance parameters:
 - SG384 TCP/IP address, RF amplitude
 - Camera serial number (ODMR camera)
-- Performance: RF poll interval, plot throttle FPS, MW settling time, camera flush frames, frames per point, sweep emit interval, live update interval, autosave interval, camera exposure time
+- Performance: RF poll interval, MW settling time, global frames per point (legacy), worker loop sleep, sweep emit interval, live update interval, autosave interval
+- **Note**: Per-operation camera settings (exposure time, frames per point) are now on the Sweep and Magnetometry tabs directly — not in Settings
 
 ---
 
@@ -160,6 +164,10 @@ python -m pytest tests/ -v
 ```
 
 31 tests covering ODMRAppState, SG384Worker, ODMRSweepWorker, and MagnetometryWorker. All tests use `simulation_mode=True` and `MagicMock` — no hardware contact.
+
+Key test scenarios:
+- ODMRSweepWorker: per-step progress emission, early stop saves partial data, sweep stop mid-transition averages correctly
+- MagnetometryWorker: stop mid-run saves partial stability cube with correct sample count
 
 ---
 

@@ -1,4 +1,8 @@
-# Experimental Control App Architecture
+# Experimental Control App Architecture Guide
+
+PySide6 + pyqtgraph reference for building lab instrument control GUIs.
+
+---
 
 ## Installation
 
@@ -8,894 +12,599 @@ pip install PySide6 pyqtgraph
 
 ---
 
-## Version Control Guidelines
+## Version Control
 
-**IMPORTANT:** Before making substantial edits to any `.py` or `.ipynb` file, create a versioned backup in the `/legacy/` subfolder.
-
-### Backup Naming Convention
+**Before making substantial edits to any `.py` or `.ipynb` file**, create a versioned backup:
 
 ```
-<filename>_YYYY-MM-DD_v#.<ext>
+legacy/<filename>_YYYY-MM-DD_v#.<ext>
 ```
 
-**Examples:**
-- `qdm_gen_2026-02-04_v1.py`
-- `Camera ODMR-new_2026-02-10_v1.ipynb`
-- `pid_control_app_2026-02-10_v2.py` (if multiple backups same day)
+For directory-level changes: `legacy/<dirname>_YYYY-MM-DD_v1/`
 
-### When to Create Backups
-
-- **Substantial refactoring** (changing architecture, adding worker threads, etc.)
-- **Major feature additions** that modify core functionality
-- **Breaking changes** to APIs or interfaces
-- **Before debugging complex issues** (to have a known-good state)
-
-### How to Create Backups
-
-```python
-# In your code/script
-import shutil
-from datetime import datetime
-from pathlib import Path
-
-def backup_to_legacy(filepath):
-    """Create versioned backup in /legacy/ folder."""
-    file_path = Path(filepath)
-    legacy_dir = file_path.parent / "legacy"
-    legacy_dir.mkdir(exist_ok=True)
-
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    version = 1
-
-    # Find next available version number for today
-    while True:
-        backup_name = f"{file_path.stem}_{date_str}_v{version}{file_path.suffix}"
-        backup_path = legacy_dir / backup_name
-        if not backup_path.exists():
-            break
-        version += 1
-
-    shutil.copy2(filepath, backup_path)
-    print(f"Backup created: {backup_path}")
-```
-
-**Command line (manual):**
-```bash
-mkdir -p legacy
-cp myfile.py "legacy/myfile_$(date +%Y-%m-%d)_v1.py"
-```
+When to create backups: substantial refactoring, major feature additions, breaking API changes, before debugging complex issues.
 
 ---
 
-## Core Pattern
-1. **experiment_state.py** - Shared state with signals (source of truth)
-2. **main_control.py** - User controls, modifies state
-3. **monitoring_window.py** - Observes state, displays data
-4. **worker_thread.py** - Non-blocking hardware I/O (NEW - see below)
-5. **script_executor.py** - Command objects + executor
-6. **script_manager.py** - Script generation & execution
-7. **app_main.py** - Wire everything together
+## Core Architecture: State → Workers → UI
+
+The fundamental pattern for all lab control apps:
+
+```
+AppState (QObject)            ← central source of truth; Qt signals on every change
+    ├── HardwareWorkerA (QThread)  ← non-blocking hardware I/O
+    ├── HardwareWorkerB (QThread)  ← non-blocking hardware I/O
+    └── AcquisitionWorker (QThread) ← data collection loop
+```
+
+**Key rule**: Hardware I/O ALWAYS in worker threads. UI ALWAYS in main thread. State is the bridge.
 
 ---
 
-## Worker Thread Pattern (CRITICAL for Multi-App Operation)
+## State Object
 
-**RULE:** All blocking hardware I/O MUST run in worker threads to prevent UI freezing and allow multiple apps to run simultaneously without blocking each other.
-
-### When to Use Worker Threads
-
-✅ **Always use worker threads for:**
-- Hardware communication (VISA, serial, USB, DAQ, etc.)
-- File I/O operations that might be slow
-- Network requests
-- Any operation that takes >16ms (to maintain 60 FPS UI)
-- Continuous data acquisition loops
-- Polling hardware for status updates
-
-❌ **Don't use worker threads for:**
-- Quick calculations (<16ms)
-- UI updates (MUST be in main thread)
-- Signal emissions (handled automatically by Qt)
-
-### Worker Thread Template
-
-```python
-from PySide6.QtCore import QThread, Signal
-
-class HardwareWorker(QThread):
-    """
-    Worker thread for non-blocking hardware communication.
-
-    Signals for communicating with main thread:
-    - All hardware responses should emit signals
-    - UI updates happen in main thread via signal handlers
-    """
-
-    # Define signals for results
-    connection_established = Signal(dict)  # Initial status
-    connection_failed = Signal(str)  # Error message
-    data_acquired = Signal(float, float, float)  # Example: (timestamp, value1, value2)
-    parameter_set_success = Signal(str, object)  # (param_name, value)
-    parameter_set_failed = Signal(str, str)  # (param_name, error_msg)
-
-    def __init__(self, state):
-        super().__init__()
-        self.state = state
-        self.hardware = None
-        self._is_running = False
-        self._command_queue = []  # Queue of (command, args) tuples
-
-    def run(self):
-        """Main worker thread loop."""
-        self._is_running = True
-
-        try:
-            # Connect to hardware
-            self._connect_hardware()
-
-            # Process commands while running
-            while self._is_running:
-                # Process queued commands
-                if self._command_queue:
-                    command, args = self._command_queue.pop(0)
-                    self._execute_command(command, args)
-
-                # Continuous data acquisition if enabled
-                if self.state.is_acquiring:
-                    self._acquire_data()
-
-                # Small sleep to avoid busy-waiting
-                time.sleep(0.01)
-
-        except Exception as e:
-            self.connection_failed.emit(str(e))
-
-        finally:
-            self._disconnect_hardware()
-
-    def stop(self):
-        """Stop the worker thread."""
-        self._is_running = False
-
-    def queue_command(self, command, *args):
-        """Queue a command for execution in worker thread."""
-        self._command_queue.append((command, args))
-
-    def _connect_hardware(self):
-        """Connect to hardware (runs in worker thread)."""
-        # Connect to instrument
-        self.hardware = connect_to_instrument()
-        initial_status = self.hardware.get_status()
-        self.connection_established.emit(initial_status)
-
-    def _disconnect_hardware(self):
-        """Disconnect from hardware."""
-        if self.hardware:
-            self.hardware.close()
-
-    def _execute_command(self, command, args):
-        """Execute a hardware command (runs in worker thread)."""
-        try:
-            if command == 'set_parameter':
-                param_name, value = args
-                self.hardware.set_parameter(param_name, value)
-                self.parameter_set_success.emit(param_name, value)
-
-            elif command == 'read_status':
-                status = self.hardware.get_status()
-                self.connection_established.emit(status)
-
-            # Add more commands as needed...
-
-        except Exception as e:
-            self.parameter_set_failed.emit(command, str(e))
-
-    def _acquire_data(self):
-        """Acquire data from hardware (runs in worker thread)."""
-        timestamp, value1, value2 = self.hardware.read_data()
-        self.data_acquired.emit(timestamp, value1, value2)
-        time.sleep(self.state.sample_interval)
-```
-
-### Using Workers in Main Window
-
-```python
-class MainControlWindow(QWidget):
-    def __init__(self, state: ExperimentState):
-        super().__init__()
-        self.state = state
-        self.worker = None
-        self.init_ui()
-
-    def on_connect(self):
-        """Connect to hardware using worker thread."""
-        if self.worker is not None and self.worker.isRunning():
-            return
-
-        # Create worker
-        self.worker = HardwareWorker(self.state)
-
-        # Connect worker signals to handlers
-        self.worker.connection_established.connect(self.on_connected)
-        self.worker.connection_failed.connect(self.on_connection_error)
-        self.worker.data_acquired.connect(self.on_data)
-        self.worker.parameter_set_success.connect(self.on_param_set)
-
-        # Start worker
-        self.worker.start()
-
-    def on_disconnect(self):
-        """Disconnect from hardware."""
-        if self.worker is not None:
-            self.worker.stop()
-            self.worker.wait()  # Wait for thread to finish
-            self.worker = None
-
-    def on_set_parameter(self):
-        """Set a parameter (queued in worker thread)."""
-        if not self.worker or not self.worker.isRunning():
-            self.log("Not connected")
-            return
-
-        value = self.parameter_input.value()
-        self.worker.queue_command('set_parameter', 'gain', value)
-        self.log(f"Setting gain to {value}...")
-
-    @Slot(dict)
-    def on_connected(self, status):
-        """Handle connection established (runs in main thread)."""
-        self.state.update_from_hardware(status)
-        self.log("Connected successfully")
-
-    @Slot(str)
-    def on_connection_error(self, error):
-        """Handle connection error (runs in main thread)."""
-        self.log(f"Error: {error}")
-
-    @Slot(float, float, float)
-    def on_data(self, timestamp, value1, value2):
-        """Handle acquired data (runs in main thread)."""
-        self.state.update_data(timestamp, value1, value2)
-
-    @Slot(str, object)
-    def on_param_set(self, param_name, value):
-        """Handle successful parameter set (runs in main thread)."""
-        self.log(f"{param_name} set to {value}")
-
-    def closeEvent(self, event):
-        """Clean up when window closes."""
-        if self.worker is not None:
-            self.worker.stop()
-            self.worker.wait()
-        event.accept()
-```
-
-### Key Worker Thread Principles
-
-1. **Hardware I/O in worker thread ONLY**
-   - Never call `self.hardware.command()` from UI code
-   - Always use `self.worker.queue_command()`
-
-2. **UI updates in main thread ONLY**
-   - Worker emits signals
-   - Main thread handlers update UI
-   - Qt automatically thread-marshals signals
-
-3. **State updates via signals**
-   - Worker queries hardware
-   - Worker emits signal with result
-   - Main thread handler updates state
-   - State change triggers UI updates via signals
-
-4. **Command queue pattern**
-   - UI queues commands via `queue_command()`
-   - Worker processes queue in its thread
-   - Results returned via signals
-
-5. **Proper cleanup**
-   - Always call `worker.stop()` before closing
-   - Use `worker.wait()` to ensure thread finishes
-   - Disconnect hardware in worker thread
-
-### Multi-App Benefits
-
-When using worker threads properly:
-
-✅ **No blocking** - Apps update independently
-✅ **Responsive UI** - Even during slow hardware operations
-✅ **Parallel operation** - Multiple apps can run simultaneously
-✅ **Thread-safe** - Qt handles synchronization automatically
-
-### Common Mistake to Avoid
-
-❌ **BAD - Blocking UI thread:**
-```python
-def on_button_click(self):
-    self.hardware.set_value(123)  # Blocks entire event loop!
-    time.sleep(2)  # Freezes ALL apps!
-    result = self.hardware.read_value()  # Blocks again!
-```
-
-✅ **GOOD - Non-blocking worker:**
-```python
-def on_button_click(self):
-    self.worker.queue_command('set_value', 123)  # Returns immediately
-    # Result will arrive via signal handler
-```
-
----
-
-## ExperimentState Template
+### Template
 
 ```python
 from PySide6.QtCore import QObject, Signal
 
-class ExperimentState(QObject):
-    parameter_changed = Signal(float)
-    measurement_started = Signal()
-    measurement_stopped = Signal()
-    
-    def __init__(self):
-        super().__init__()
-        self._parameter = 0.0
-    
-    @property
-    def parameter(self):
-        return self._parameter
-    
-    @parameter.setter
-    def parameter(self, value):
-        self._parameter = value
-        self.parameter_changed.emit(value)
-```
-
-**Rule:** One signal/property per parameter that changes.
-
----
-
-## Main Control Window Template
-
-```python
-class MainControlWindow(QWidget):
-    def __init__(self, state: ExperimentState):
-        self.state = state
-        self.init_ui()
-    
-    def on_button_click(self):
-        # Modify state (this triggers signals to monitoring windows)
-        self.state.parameter = float(self.parameter_input.text())
-        # Call hardware if needed
-```
-
-**Rule:** Modify state when user interacts; monitoring windows auto-update.
-
----
-
-## Monitoring Window Template
-
-```python
-class MonitoringWindow(QWidget):
-    def __init__(self, state: ExperimentState):
-        self.state = state
-        self.connect_signals()
-    
-    def connect_signals(self):
-        self.state.parameter_changed.connect(self.on_parameter_changed)
-    
-    def on_parameter_changed(self, value):
-        self.value_label.setText(f"{value:.2f}")
-```
-
-**Rule:** Listen to signals; never modify state.
-
----
-
-## Script Commands Template
-
-```python
-class ScriptCommand:
-    def execute(self, executor):
-        raise NotImplementedError
-
-class ClickButtonCommand(ScriptCommand):
-    def __init__(self, button_name):
-        self.button_name = button_name
-    
-    def execute(self, executor):
-        if self.button_name == "start":
-            executor.main_window.on_start()
-        print(f"[Script] Clicked {self.button_name}")
-
-class SetParameterCommand(ScriptCommand):
-    def __init__(self, parameter_name, value):
-        self.parameter_name = parameter_name
-        self.value = value
-    
-    def execute(self, executor):
-        executor.main_window.parameter_input.setText(str(self.value))
-
-class WaitCommand(ScriptCommand):
-    def __init__(self, duration):
-        self.duration = duration
-    
-    def execute(self, executor):
-        import time
-        time.sleep(self.duration)
-
-class ReadParameterCommand(ScriptCommand):
-    def __init__(self, parameter_name):
-        self.parameter_name = parameter_name
-    
-    def execute(self, executor):
-        return getattr(executor.state, self.parameter_name)
-
-class LoopCommand(ScriptCommand):
-    def __init__(self, count, commands):
-        self.count = count
-        self.commands = commands
-    
-    def execute(self, executor):
-        for i in range(self.count):
-            for cmd in self.commands:
-                cmd.execute(executor)
-
-class ConditionalCommand(ScriptCommand):
-    def __init__(self, condition_func, true_commands, false_commands=None):
-        self.condition_func = condition_func
-        self.true_commands = true_commands
-        self.false_commands = false_commands or []
-    
-    def execute(self, executor):
-        if self.condition_func(executor):
-            for cmd in self.true_commands:
-                cmd.execute(executor)
-        else:
-            for cmd in self.false_commands:
-                cmd.execute(executor)
-```
-
-**Rule:** Add one command class per atomic action.
-
----
-
-## Script Executor Template
-
-```python
-class ScriptExecutor:
-    def __init__(self, main_window, monitoring_windows, state):
-        self.main_window = main_window
-        self.monitoring_windows = monitoring_windows
-        self.state = state
-        self.is_running = False
-    
-    def execute_script(self, commands):
-        self.is_running = True
-        try:
-            for cmd in commands:
-                if not self.is_running:
-                    break
-                cmd.execute(self)
-        finally:
-            self.is_running = False
-    
-    def stop_script(self):
-        self.is_running = False
-```
-
----
-
-## Script Manager Template
-
-```python
-class ScriptManagerWindow(QWidget):
-    def __init__(self, executor: ScriptExecutor, state: ExperimentState):
-        self.executor = executor
-        self.state = state
-        self.current_script_commands = None
-        self.init_ui()
-    
-    def on_generate_script(self):
-        # TODO: Call Claude Code to generate commands
-        user_input = self.natural_language_input.toPlainText()
-        # Generated code should create: commands = [cmd1, cmd2, ...]
-        # Then: self.current_script_commands = commands
-    
-    def on_execute_script(self):
-        if self.current_script_commands:
-            self.executor.execute_script(self.current_script_commands)
-```
-
----
-
-## Real-Time Plotting Standard (PyQtGraph)
-
-Default for scientific data visualization. Install with: `pip install pyqtgraph`
-
-**ALWAYS use the standardized `RealTimeGraph` class from `real_time_graph.py` for monitoring plots.**
-
-### Import and Use
-
-```python
-from real_time_graph import RealTimeGraph
-
-# Create graph instance
-graph = RealTimeGraph(
-    state,
-    title="Laser Power",
-    y_label="Power (W)",
-    time_window=60  # Initial time window in seconds
-)
-```
-
-### Standard Features (Built-in)
-
-- ✅ **Enable/Disable Rolling Window** - Checkbox to toggle between rolling window and manual control
-- ✅ **Adjustable Time Window** - Spinbox (5 seconds to unlimited)
-- ✅ **Y-Axis Auto-Scale** - Automatically scales to fit data
-- ✅ **X-Axis Modes**:
-  - Rolling window mode: Auto-pans to show last N seconds
-  - Manual mode: Full PyQtGraph control (zoom, pan, right-click options)
-- ✅ **No SI Prefix Auto-Scaling** - Prevents confusing "×0.001" axis labels
-- ✅ **Info Display** - Current value, window size, point count
-- ✅ **Right-Click Context Menu** - Auto Scale, View All, Manual Range, etc.
-- ✅ **Clear Data Method** - `graph.clear_data()`
-- ✅ **Light Background** - White background with dark text/axes
-
-### Key Methods
-
-```python
-# Update Y-axis label (e.g., when switching units)
-graph.set_y_label("Power (mW)")
-
-# Clear all data
-graph.clear_data()
-
-# Programmatically set time window
-graph.set_time_window(120)  # seconds
-
-# Get current data
-x_data, y_data = graph.get_current_data()
-
-# Export to CSV
-graph.export_csv("data.csv")
-```
-
-### Architecture Integration
-
-The `RealTimeGraph` automatically connects to `ExperimentState.data_point_recorded` signal:
-
-```python
-# In ExperimentState
-class ExperimentState(QObject):
-    data_point_recorded = Signal(dict)  # Must emit {'timestamp': float, 'value': float}
-
-    def update_measurement(self, timestamp, value):
-        # Emit data for RealTimeGraph
-        self.data_point_recorded.emit({'timestamp': timestamp, 'value': value})
-```
-
-### Unit Conversion Pattern
-
-When displaying values in different units (e.g., W vs mW), intercept the signal and convert before passing to graph:
-
-```python
-# In your control window
-def create_graph(self):
-    self.graph = RealTimeGraph(self.state, title="Laser Power", y_label="Power (W)")
-
-    # Disconnect default and use custom handler for unit conversion
-    self.state.data_point_recorded.disconnect(self.graph.on_new_data)
-    self.state.data_point_recorded.connect(self.on_graph_data)
-
-def on_graph_data(self, data):
-    """Convert units before sending to graph"""
-    value_watts = data['value']
-    value_display = value_watts * 1000 if self.use_mw else value_watts
-    self.graph.on_new_data({'timestamp': data['timestamp'], 'value': value_display})
-
-def on_unit_changed(self):
-    """When user switches units, update label and rescale existing data"""
-    unit = 'mW' if self.use_mw else 'W'
-    self.graph.set_y_label(f"Power ({unit})")
-
-    # Rescale existing data
-    if self.graph.data_y:
-        scale = 1000 if (not was_mw and self.use_mw) else 1/1000
-        self.graph.data_y = [y * scale for y in self.graph.data_y]
-        self.graph.plot_line.setData(self.graph.data_x, self.graph.data_y)
-```
-
-### Multiple Graphs Example
-
-```python
-# Different graphs for different measurements
-power_graph = RealTimeGraph(state, title="Laser Power", y_label="Power (W)", time_window=60)
-temp_graph = RealTimeGraph(state, title="Temperature", y_label="Temp (K)", time_window=300)
-```
-
-### DO NOT Create Custom Plots
-
-Always use `RealTimeGraph` for consistency. Do not create custom PyQtGraph widgets unless there's a specific requirement that RealTimeGraph cannot fulfill.
-
----
-
-## App Entry Point Template
-
-```python
-def main():
-    app = QApplication(sys.argv)
-    state = ExperimentState()
-    
-    main_window = MainControlWindow(state)
-    monitoring_1 = MonitoringWindow(state)
-    graph = RealTimeGraph(state, "Temperature")
-    
-    executor = ScriptExecutor(main_window, [monitoring_1], state)
-    script_manager = ScriptManagerWindow(executor, state)
-    
-    main_window.show()
-    monitoring_1.show()
-    graph.show()
-    script_manager.show()
-    
-    sys.exit(app.exec())
-```
-
----
-
-## Key Principles
-
-1. **One shared state** - All windows reference same ExperimentState instance
-2. **Signal-based updates** - State changes emit signals; windows listen
-3. **Separation of concerns** - Control modifies, monitoring observes
-4. **Command pattern** - Scripts are lists of command objects
-5. **No business logic in UI** - Put logic in state or commands
-
----
-
-## Common Tasks
-
-### Add a new parameter
-1. Add to ExperimentState: `parameter_changed = Signal(float)` + property
-2. Add to MainControlWindow: input field + button handler
-3. Add to MonitoringWindow: connect signal + update display
-4. Monitoring windows auto-update (no extra work needed)
-
-### Add a new script command
-1. Subclass ScriptCommand
-2. Implement execute() method
-3. Use in scripts via `MyCommand(args)`
-
-### Add a monitoring window
-```python
-mon = MonitoringWindow(state)
-mon.show()
-executor.monitoring_windows.append(mon)
-```
-
-### Generate script with Claude
-1. User enters natural language
-2. Claude generates: `commands = [ClickButtonCommand("start"), WaitCommand(5), ...]`
-3. Preview shows command list
-4. User clicks Execute
-
----
-
-## Hardware Integration
-
-**IMPORTANT:** Always use worker threads for hardware communication.
-
-### Hardware Interface Class
-
-```python
-class HardwareInterface:
-    """Hardware abstraction layer - used by worker thread."""
-    def connect(self): pass
-    def disconnect(self): pass
-    def set_parameter(self, value): pass
-    def read_sensor(self): pass
-    def get_status(self): pass
-```
-
-### Worker Thread Integration
-
-```python
-class HardwareWorker(QThread):
-    data_acquired = Signal(float, float)
-    parameter_set = Signal(str, object)
-
-    def __init__(self, state):
-        super().__init__()
-        self.state = state
-        self.hardware = HardwareInterface()
+class AppState(QObject):
+    """Central state. All mutable properties emit Qt signals."""
+
+    # One signal per parameter that needs to notify the UI
+    temperature_changed = Signal(float)
+    measurement_running_changed = Signal(bool)
+    data_point_recorded = Signal(dict)  # {'timestamp': float, 'value': float}
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._temperature = 0.0
         self._is_running = False
-        self._command_queue = []
+
+    @property
+    def temperature(self) -> float:
+        return self._temperature
+
+    @temperature.setter
+    def temperature(self, value: float):
+        self._temperature = float(value)
+        self.temperature_changed.emit(self._temperature)
+
+    @property
+    def is_running(self) -> bool:
+        return self._is_running
+
+    @is_running.setter
+    def is_running(self, value: bool):
+        self._is_running = bool(value)
+        self.measurement_running_changed.emit(self._is_running)
+```
+
+### State Design Rules
+
+- **One signal per property** that the UI needs to react to
+- **Prefix subsystem names** to avoid conflicts: `sweep_freq_ghz`, `mag_num_samples`, `rf_is_connected`
+- **Business logic methods** belong in state (e.g., `try_start_sweep()` that checks mutually exclusive conditions)
+- **Config persistence**: implement `get_config()` / `load_config()` for JSON serialization of all user-adjustable properties
+- **Do NOT** store live hardware objects (camera, SG384) as state properties with signals — they're plain attributes
+- **Separate transient runtime state** (results, current measurement index) from configuration (freq ranges, num sweeps)
+
+### Config Persistence Pattern
+
+```python
+_CONFIG_KEYS = ["freq_start_ghz", "freq_end_ghz", "num_sweeps", ...]
+
+def get_config(self) -> dict:
+    return {key: getattr(self, key) for key in self._CONFIG_KEYS}
+
+def load_config(self, config: dict):
+    for key, value in config.items():
+        if key in self._CONFIG_KEYS:
+            try:
+                setattr(self, key, value)
+            except Exception:
+                pass  # silently skip unknown/incompatible keys
+```
+
+---
+
+## Worker Threads
+
+### When to Use Workers
+
+✅ Always use workers for:
+- Hardware communication (VISA, serial, USB, DAQ, camera)
+- Operations that take >16 ms
+- Continuous acquisition/polling loops
+- File I/O that might be slow
+
+❌ Never use workers for:
+- UI updates (must be main thread)
+- Quick calculations (<16 ms)
+
+### Short-Lived Task Worker (One Measurement Run)
+
+Use for operations that have a defined start and end (ODMR sweep, magnetometry stability measurement):
+
+```python
+from PySide6.QtCore import QThread, Signal
+
+class AcquisitionWorker(QThread):
+    progress = Signal(int, int)       # (current_step, total_steps)
+    data_acquired = Signal(object)    # intermediate data for live preview
+    completed = Signal(dict)          # final result dict
+    failed = Signal(str)              # error message
+
+    def __init__(self, state, simulation_mode=False, parent=None):
+        super().__init__(parent)
+        self.state = state
+        self.simulation_mode = simulation_mode
+        self._stop_requested = False
 
     def run(self):
-        self._is_running = True
-        self.hardware.connect()
+        """Entry point — sets running flag, calls _run_measurement, clears flag."""
+        self.state.is_running = True
+        try:
+            result = self._run_measurement()
+            self.completed.emit(result)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        finally:
+            self.state.is_running = False
 
-        while self._is_running:
-            if self._command_queue:
-                cmd, args = self._command_queue.pop(0)
-                self._execute_command(cmd, args)
-            time.sleep(0.01)
+    def stop(self):
+        """Request early termination after current step completes."""
+        self._stop_requested = True
 
-        self.hardware.disconnect()
-
-    def queue_command(self, command, *args):
-        self._command_queue.append((command, args))
-
-    def _execute_command(self, command, args):
-        if command == 'set_parameter':
-            param, value = args
-            self.hardware.set_parameter(param, value)
-            self.parameter_set.emit(param, value)
+    def _run_measurement(self) -> dict:
+        results = []
+        total = self.state.num_steps
+        for i in range(total):
+            if self._stop_requested:
+                break
+            data = self._acquire_one_step(i)
+            results.append(data)
+            self.progress.emit(i + 1, total)
+            if (i + 1) % self.state.live_update_interval == 0:
+                self.data_acquired.emit(self._compute_preview(results))
+        return {"data": results, "n_acquired": len(results)}
 ```
 
-### Main Window Integration
+**Critical pattern**: Check `_stop_requested` **inside the innermost loop** (per frequency step, not per sweep repetition) so Stop takes effect quickly.
+
+**Averaging on early stop**: Track `completed_passes` separately from `total_passes` and divide by `completed_passes` when computing averages — never divide by the total if stopped early.
+
+### Long-Running Polling Worker (RF status, laser power)
+
+Use for workers that run continuously while the app is open:
 
 ```python
-# In MainControlWindow:
-def __init__(self, state):
-    super().__init__()
-    self.state = state
-    self.worker = None
+class PollingWorker(QThread):
+    status_updated = Signal(dict)
+    command_completed = Signal(str, object)  # (command_name, result)
 
-def on_connect(self):
-    self.worker = HardwareWorker(self.state)
-    self.worker.parameter_set.connect(self.on_param_set)
-    self.worker.start()
+    def __init__(self, state, parent=None):
+        super().__init__(parent)
+        self.state = state
+        self._running = False
+        self._commands = []  # list of (name, args) tuples
 
-def on_set_parameter(self):
-    value = float(self.parameter_input.text())
-    self.worker.queue_command('set_parameter', 'gain', value)
+    def run(self):
+        self._running = True
+        self._connect_hardware()
+        while self._running:
+            # Process any queued commands first
+            if self._commands:
+                name, args = self._commands.pop(0)
+                self._execute(name, args)
+            else:
+                # Idle polling
+                self._poll_status()
+            import time; time.sleep(self.state.poll_interval_s)
+        self._disconnect_hardware()
 
-@Slot(str, object)
-def on_param_set(self, param, value):
-    # Update state (runs in main thread)
-    self.state.parameter = value
+    def stop(self):
+        self._running = False
+
+    def queue_command(self, name: str, *args):
+        self._commands.append((name, args))
+```
+
+**SG384 lock pattern**: When multiple workers share hardware (e.g., a polling worker + an acquisition worker both using the SG384), use a `threading.Lock` on the state:
+
+```python
+# In state __init__:
+self.sg384_lock = threading.Lock()
+
+# In polling worker: non-blocking try
+if state.sg384_lock.acquire(blocking=False):
+    try:
+        self._poll_rf_status()
+    finally:
+        state.sg384_lock.release()
+
+# In acquisition worker: blocking acquire for entire measurement
+with state.sg384_lock:
+    for step in measurement_steps:
+        ...  # exclusive access guaranteed
+```
+
+### Wiring Workers to UI
+
+```python
+class MainWindow(QMainWindow):
+    def _start_measurement(self):
+        self._worker = AcquisitionWorker(self.state, simulation_mode=...)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.data_acquired.connect(self._on_data)
+        self._worker.completed.connect(self._on_completed)
+        self._worker.failed.connect(self._on_failed)
+        self._worker.start()
+
+    def _stop_measurement(self):
+        if self._worker and self._worker.isRunning():
+            self._worker.stop()
+
+    @Slot(int, int)
+    def _on_progress(self, current, total):
+        self.progress_bar.setMaximum(total)
+        self.progress_bar.setValue(current)
+        self.step_label.setText(f"Step {current}/{total}")  # "Step N/Total" not "Sweep N/Total"
+
+    def closeEvent(self, event):
+        if self._worker and self._worker.isRunning():
+            self._worker.stop()
+            self._worker.wait()
+        event.accept()
 ```
 
 ---
 
-## Debugging
+## UI Structure: Tab-Based Apps
 
-- Check state changes print to console
-- Verify signals are emitted (`print(f"[Signal] {param_name} changed")`)
-- Test commands individually in script executor
-- Watch monitoring windows update when state changes
-- Use script executor's print statements for automation tracking
+For complex multi-step workflows, use a `QTabWidget` with one `TabHandler` class per tab:
+
+### Tab Handler Pattern
+
+```python
+class SweepTabHandler:
+    """Handles Sweep tab: connects UI widgets to state, manages worker lifecycle."""
+
+    def __init__(self, tab_widget: QWidget, state: AppState,
+                 stop_streaming_fn, set_mode_fn):
+        self.state = state
+        self._stop_streaming = stop_streaming_fn
+        self._set_mode = set_mode_fn
+        self._worker = None
+
+        # Load Qt Designer UI into the placeholder widget
+        self.ui = Ui_sweep_tab_content()
+        self.ui.setupUi(tab_widget)
+
+        # Add widgets that can't easily be done in Qt Designer
+        self._add_programmatic_widgets()
+        self._connect_widgets()
+        self._sync_from_state()
+
+    def _add_programmatic_widgets(self):
+        """Inject pyqtgraph plots, complex widgets, etc. into placeholder containers."""
+        self._plot = pg.PlotWidget()
+        layout = QVBoxLayout(self.ui.plot_placeholder)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._plot)
+
+    def _connect_widgets(self):
+        """Wire UI widgets ↔ state attributes and slot methods."""
+        s = self.state
+        ui = self.ui
+        # Spinboxes → state (one-way, no feedback loop)
+        ui.freq_start_spin.valueChanged.connect(lambda v: setattr(s, 'freq_start_ghz', v))
+        # State signals → UI updates
+        s.sweep_running_changed.connect(self._on_running_changed)
+        # Buttons
+        ui.start_btn.clicked.connect(self._on_start)
+        ui.stop_btn.clicked.connect(self._on_stop)
+
+    def _sync_from_state(self):
+        """Push current state values → widgets (call once at init, after load_config)."""
+        ui = self.ui
+        s = self.state
+        ui.freq_start_spin.setValue(s.freq_start_ghz)
+        ui.stop_btn.setEnabled(False)
+```
+
+### Programmatic Widget Addition to Qt Designer Forms
+
+When adding spinboxes or labels to an existing Qt Designer form layout:
+
+```python
+# In __init__, AFTER setupUi:
+form = self.ui.my_form_layout   # access the QFormLayout by name
+lbl = QLabel("Exposure time (µs):")
+self._exposure_spin = QSpinBox()
+self._exposure_spin.setMinimum(100)
+self._exposure_spin.setMaximum(500000)
+self._exposure_spin.setSingleStep(1000)
+form.addRow(lbl, self._exposure_spin)
+# Then connect and sync as normal
+```
 
 ---
 
-## Running Multiple Apps Simultaneously
+## pyqtgraph Usage
 
-### Single QApplication, Multiple Windows
-
-Qt allows only **one QApplication per process**. To run multiple control apps:
+### Live Spectrum Plot (ODMR sweep)
 
 ```python
-# launcher.py
+import pyqtgraph as pg
+import numpy as np
+
+# In _add_programmatic_widgets:
+self._plot = pg.PlotWidget()
+self._plot.setLabel('left', 'Contrast')
+self._plot.setLabel('bottom', 'Frequency (GHz)')
+
+# Data series — dark purple dots, no connecting line
+_purple = (80, 0, 120)
+self._data_curve = self._plot.plot(
+    pen=None, symbol='o',
+    symbolBrush=pg.mkBrush(_purple),
+    symbolPen=pg.mkPen(None),
+    symbolSize=5
+)
+# Fit curve — solid black line
+self._fit_curve = self._plot.plot(pen=pg.mkPen('k', width=2))
+
+# Update during acquisition:
+self._data_curve.setData(freqs, contrasts)
+
+# Update after completion (Lorentzian fit overlay):
+if result.get("x_fit") is not None:
+    self._fit_curve.setData(np.asarray(result["x_fit"]),
+                            np.asarray(result["y_fit"]))
+```
+
+### Live Image View (field map preview)
+
+```python
+self._preview = pg.ImageView()
+self._preview.ui.roiBtn.hide()
+self._preview.ui.menuBtn.hide()
+layout = QVBoxLayout(self.ui.preview_placeholder)
+layout.setContentsMargins(0, 0, 0, 0)
+layout.addWidget(self._preview)
+
+# Update:
+self._preview.setImage(field_gauss.T, autoLevels=True)
+```
+
+### RealTimeGraph (rolling-window monitoring)
+
+For continuous time-series monitoring (laser power, PID output), use the existing `RealTimeGraph` widget from `GUI/widgets/real_time_graph.py`:
+
+```python
+from widgets.real_time_graph import RealTimeGraph
+
+graph = RealTimeGraph(state, title="Laser Power", y_label="Power (mW)", time_window=60)
+# Automatically connects to state.data_point_recorded Signal(dict)
+# dict must have keys: 'timestamp' (float) and 'value' (float)
+```
+
+---
+
+## Qt Designer / UI Files
+
+- `.ui` files in `ui/` are Qt Designer XML. **Never edit `ui_*.py` by hand.**
+- Regenerate Python bindings after editing a .ui file: `pyside6-uic -g python my_tab.ui -o ui_my_tab.py` (run from `ui/`)
+- Inject complex widgets (pyqtgraph, custom tables) programmatically after `setupUi`; put placeholder `QWidget` containers in Qt Designer
+- Use `formLayout.addRow(label, widget)` to add rows programmatically to existing form layouts
+
+---
+
+## Multi-App Launcher Pattern
+
+Qt allows only one `QApplication` per process. To run multiple apps together:
+
+```python
+# launch_all_apps.py
 from PySide6.QtWidgets import QApplication
-from experiment_state import ExperimentState
-from laser_power_app import LaserPowerMonitor
+import sys
+from state.experiment_state import ExperimentState
+from laser_power_app import LaserPowerApp
 from pid_control_app import PIDControlApp
 
-app = QApplication([])
+app = QApplication(sys.argv)
+state = ExperimentState()   # single shared state
 
-# Create SINGLE shared state
-state = ExperimentState()
+laser = LaserPowerApp(state=state)
+pid = PIDControlApp(state=state)
 
-# Create multiple apps with shared state
-laser_app = LaserPowerMonitor(state=state)
-pid_app = PIDControlApp(state=state)
-
-# Position windows side-by-side
-laser_app.setGeometry(50, 50, 480, 800)
-pid_app.setGeometry(550, 50, 480, 800)
-
-laser_app.show()
-pid_app.show()
-
-app.exec()
+laser.show()
+pid.show()
+sys.exit(app.exec())
 ```
 
-### Shared State Pattern
-
-All apps should accept optional `state` parameter:
+Each app must accept an optional `state` parameter:
 
 ```python
-class MyControlApp(QMainWindow):
-    def __init__(self, state=None):
-        super().__init__()
-        # Use provided state or create new one
-        self.state = state if state is not None else ExperimentState()
-        # ...
+class MyApp(QMainWindow):
+    def __init__(self, state=None, parent=None):
+        super().__init__(parent)
+        self.state = state if state is not None else AppState()
 ```
 
-This allows:
-- **Standalone mode**: `app = MyControlApp()` (creates its own state)
-- **Shared mode**: `app = MyControlApp(state=shared_state)` (uses shared state)
+### sys.path Management for Embedded Apps
 
-### Cross-App Communication
-
-Apps communicate via shared state signals:
+When one app (e.g., `odmr_app`) embeds another app (e.g., `camera_app`) as a tab, and both have `state/` and `workers/` subpackages with the same names, use `sys.modules` to prevent import collisions:
 
 ```python
-# In launcher or connection code
-state.pid_output_changed.connect(laser_app.on_pid_output_changed)
-state.laser_power_updated.connect(pid_app.on_laser_power_changed)
+# Before importing camera_app:
+import sys
+_saved = {k: sys.modules.pop(k) for k in list(sys.modules)
+          if k.startswith(('state.', 'workers.', 'state', 'workers'))}
+from camera_app import CameraApp
+sys.modules.update(_saved)  # restore odmr_app's state/workers
 ```
-
-### State Naming Convention
-
-When multiple subsystems share one state:
-
-- **Laser power**: `laser_power`, `laser_acquisition_started`, etc.
-- **PID controller**: `pid_setpoint`, `pid_output`, `pid_connection_changed`, etc.
-- **ODMR**: `odmr_frequency`, `odmr_data_updated`, etc.
-
-Prefix properties/signals with subsystem name to avoid conflicts.
 
 ---
 
-## When to Use This
+## Config Save/Load
 
-When Claude Code builds a new experimental control app:
+```python
+import json
+from pathlib import Path
 
-1. **Follow these templates** - Consistent architecture across all apps
-2. **Use worker threads** - ALWAYS for hardware I/O (prevents blocking)
-3. **Accept state parameter** - Enable shared state for multi-app operation
-4. **Adapt command classes** - Customize for your hardware
-5. **Keep ExperimentState minimal** - Only shared data, not business logic
-6. **Let signals drive updates** - UI reacts to state changes
-7. **Create versioned backups** - Before substantial changes, backup to `/legacy/`
-8. **Generate scripts via natural language** - If script automation needed
+CONFIG_PATH = Path(__file__).parent / "config" / "app_config.json"
 
-### Checklist for New Apps
+def save_config(state):
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_PATH, 'w') as f:
+        json.dump(state.get_config(), f, indent=2, default=str)
 
-- [ ] ExperimentState with proper signals
-- [ ] Worker thread for all hardware I/O
-- [ ] Main control window accepts optional `state` parameter
-- [ ] Monitoring windows observe state via signals
-- [ ] No blocking operations in UI thread
-- [ ] Proper cleanup in `closeEvent()`
-- [ ] Config save/load functionality
-- [ ] RealTimeGraph for live plotting
-- [ ] Versioned backup before major refactoring
+def load_config(state):
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH) as f:
+            state.load_config(json.load(f))
+```
 
-This ensures consistency, performance, and compatibility across lab applications.
+Call `load_config` at app startup (after creating state but before showing UI), `save_config` in `closeEvent`.
 
 ---
 
-## Quick Reference
+## Common Pitfalls and Lessons Learned
 
-### App Startup Checklist
+### Hardware / Workers
 
-1. ✅ Create `ExperimentState` subclass with subsystem-prefixed properties
-2. ✅ Create `Worker` subclass for hardware I/O
-3. ✅ Create main window accepting optional `state` parameter
-4. ✅ Connect worker signals to UI update handlers
-5. ✅ Use `worker.queue_command()` for all hardware operations
-6. ✅ Test standalone: `python my_app.py`
-7. ✅ Test with launcher: Both apps run without blocking each other
-8. ✅ Backup original files to `/legacy/` before major changes
+**Stop button doesn't work mid-sweep**
+- Root cause: `_stop_requested` only checked between outer loop iterations (sweep repetitions), not inner iterations (frequency steps)
+- Fix: Check `_stop_requested` inside the innermost loop that drives hardware steps
 
-### Common Issues
+**Progress bar never updates**
+- Root cause: Progress signal emitted only once per full sweep pass, not per frequency step
+- Fix: Call `self.progress.emit(steps_done, total_steps)` after every `measure_odmr_point()` call
 
-**Problem:** UI freezes when setting parameters
-- **Cause:** Hardware I/O in main thread
-- **Fix:** Move to worker thread, use command queue
+**Averaging wrong on early stop**
+- Root cause: Final result divided by `num_passes` regardless of how many completed
+- Fix: Track `passes_done` counter; increment only when a full pass completes; divide by `max(1, passes_done)`
 
-**Problem:** Multiple apps block each other
-- **Cause:** Hardware I/O in main thread
-- **Fix:** Each app needs its own worker thread
+**Camera exclusive access**
+- Root cause: Camera opened by streaming worker AND by acquisition worker simultaneously
+- Fix: Stop streaming before starting acquisition; use a `CameraMode` enum (`IDLE / STREAMING / ACQUIRING`) and enforce transitions
 
-**Problem:** State changes don't update UI
-- **Cause:** Missing signal connections
-- **Fix:** Check `connect_signals()` method
+**sys.path import order**
+- Root cause: `odmr_app/` directory contains `state/` and `workers/` subpackages; if `GUI/` is on sys.path first, these shadow the standalone `GUI/state/` and `GUI/workers/`
+- Fix: Use `sys.path.insert(0, ...)` to put the app-specific root FIRST, not last
 
-**Problem:** Worker thread doesn't stop on close
-- **Cause:** Missing cleanup in `closeEvent()`
-- **Fix:** Add `worker.stop()` and `worker.wait()`
+**SG384 `get_frequency()` not implemented**
+- Root cause: Polling worker called `get_frequency()` which was never implemented in `SG384Controller`
+- Fix: Add the method, or check `hasattr` before calling
+
+### UI
+
+**Signal feedback loops**
+- Root cause: Syncing state → widget triggers widget's `valueChanged` → sets state again → infinite loop
+- Fix: Wrap `_sync_from_state` widget updates with `widget.blockSignals(True) ... widget.blockSignals(False)`
+
+**CameraMode ValueError**
+- Root cause: State emitted `CameraMode` enum object; subscriber tried `CameraMode(enum_obj)` which raises ValueError
+- Fix: Emit `.value` (the string), not the enum: `self.camera_mode_changed.emit(value.value)`
+
+**File menu not showing**
+- Root cause: Menu bar created but not added to the correct parent (must be `QMainWindow.menuBar()`)
+- Fix: Use `self.menuBar().addMenu(...)` not `QMenuBar(); self.layout().addWidget(menubar)`
+
+**Plot fit curves never appear**
+- Root cause: `_fit_curve` created in `__init__` but never populated (forgot to call `setData` in the completion slot)
+- Fix: In `_on_sweep_completed`, check `result.get("x_fit")` and call `self._fit_curve.setData(...)`
+
+**Camera config path collision**
+- Root cause: `camera_app.py` saves/loads config from a fixed relative path, but when embedded in odmr_app, cwd is different
+- Fix: Use `Path(__file__).parent` anchored paths for all config files
+
+### State Design
+
+**Vestigial settings**
+- A setting that exists in state and the Settings UI but is never actually read by any worker is confusing
+- Example: `perf_camera_flush_frames` — `flush_buffer()` is called unconditionally in `qdm_gen`, so the setting has no effect
+- Fix: Remove from state, `_CONFIG_KEYS`, and the UI binding; hide the widget programmatically if you can't edit the .ui file
+
+**Per-operation vs global settings**
+- If two operations (sweep, magnetometry) both use a camera but with different optimal settings (exposure time, frames), give each its own property in state
+- Don't share a single global `perf_camera_exposure_time_us`; use `sweep_exposure_time_us` and `mag_exposure_time_us`
+
+**Cross-tab communication via state signals**
+- When "Send to Magnetometry" in Sweep tab should update Magnetometry tab spinboxes, the cleanest approach is:
+  1. Sweep tab sets `state.mag_exposure_time_us = ...` and emits `state.mag_camera_settings_pushed.emit(exp_us, n_frames)`
+  2. Magnetometry tab listens to `state.mag_camera_settings_pushed` and updates its spinboxes
+- This keeps state as the single source of truth without the tabs knowing about each other
+
+---
+
+## Device Abstraction (Multi-Device Apps)
+
+For apps that need to support multiple hardware configurations (different labs, different hardware setups), use an abstraction layer:
+
+```python
+from abc import ABC, abstractmethod
+from PySide6.QtWidgets import QWidget
+
+class AbstractDevice(ABC):
+    @abstractmethod
+    def get_name(self) -> str: ...
+    @abstractmethod
+    def get_control_widget(self) -> QWidget: ...
+    @abstractmethod
+    def is_connected(self) -> bool: ...
+    @abstractmethod
+    def get_worker(self) -> 'AbstractDeviceWorker': ...
+
+class DeviceRegistry:
+    """Auto-discovers available devices at startup."""
+    def __init__(self):
+        self.devices = {}
+        self.available_device_classes = []  # register AbstractDevice subclasses here
+
+    def discover_devices(self):
+        for cls in self.available_device_classes:
+            try:
+                dev = cls()
+                if dev.is_connected():
+                    self.devices[dev.get_name()] = dev
+            except Exception as e:
+                print(f"Could not initialize {cls.__name__}: {e}")
+```
+
+**When to use**: Different labs with different hardware, hardware swapping needed, team shares code across setups.
+**When NOT to use**: Single fixed hardware setup — the abstraction adds complexity without benefit.
+
+---
+
+## Checklist for New Apps
+
+- [ ] `AppState` (QObject) with subsystem-prefixed properties and signals
+- [ ] `_CONFIG_KEYS` list + `get_config()` / `load_config()` for JSON persistence
+- [ ] Worker thread(s) for ALL hardware I/O; no blocking in main thread
+- [ ] Short-lived workers: `_stop_requested` checked **per innermost step**
+- [ ] Polling workers: non-blocking `sg384_lock.acquire(blocking=False)`
+- [ ] Tab handlers: `_add_programmatic_widgets()` → `_connect_widgets()` → `_sync_from_state()`
+- [ ] `blockSignals(True/False)` in `_sync_from_state` to avoid feedback loops
+- [ ] `closeEvent`: stop all workers, `worker.wait()`, save config
+- [ ] Accept optional `state` param for multi-app launcher
+- [ ] Simulation mode for testing without hardware (`simulation_mode=True`)
+- [ ] Tests: use `MagicMock` + `simulation_mode=True`, no hardware contact
+- [ ] Backup to `legacy/` before major refactoring
+
+---
+
+## Quick Reference: Common Issues
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Stop button ineffective | `_stop_requested` checked only between passes | Check inside innermost frequency loop |
+| Progress bar stuck | Signal emitted once per pass, not per step | Emit after every `measure_point()` call |
+| Wrong average on stop | Divides by `total_passes` regardless | Track `passes_done`, divide by that |
+| UI freezes | Hardware I/O in main thread | Move to worker thread |
+| Signal feedback loop | `_sync_from_state` triggers `valueChanged` | Wrap with `blockSignals(True/False)` |
+| CameraMode ValueError | Emitting enum object instead of string | Emit `value.value` (the string) |
+| Import collision | Two packages with same name on sys.path | Insert app-specific root at position 0 |
+| Config path wrong | Relative path breaks when cwd changes | Use `Path(__file__).parent`-anchored paths |

@@ -304,11 +304,11 @@ class MagnetometryWorker(QThread):
         state = self.state
         settings_dict = {
             "settling_time": state.perf_mw_settling_time_s,
-            "n_frames": state.perf_n_frames_per_point,
+            "n_frames": state.mag_n_frames_per_point,
             "simulation_mode": False,
             "camera": {
                 "serial": state.odmr_camera_serial,
-                "exposure_time_us": state.perf_camera_exposure_time_us,
+                "exposure_time_us": state.mag_exposure_time_us,
             },
             "srs": {
                 "address": state.rf_address,
@@ -391,7 +391,7 @@ class MagnetometryWorker(QThread):
             slope_list=slope_list,
             parity_list=parity_list,
             settling_time=self.state.perf_mw_settling_time_s,
-            n_frames=self.state.perf_n_frames_per_point,
+            n_frames=self.state.mag_n_frames_per_point,
             baseline_list=baseline_list,
         )
 

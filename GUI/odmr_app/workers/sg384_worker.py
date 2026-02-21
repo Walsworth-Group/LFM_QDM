@@ -202,6 +202,9 @@ class SG384Worker(QThread):
                 if command == 'set_frequency':
                     freq_ghz = args[0]
                     ctrl.set_frequency(freq_ghz, 'GHz')
+                    # Emit polled freq immediately so the display updates without
+                    # waiting for the next scheduled poll cycle.
+                    self.frequency_polled.emit(freq_ghz)
                     self.parameter_set_success.emit('set_frequency', freq_ghz)
                 elif command == 'set_amplitude':
                     dbm = args[0]

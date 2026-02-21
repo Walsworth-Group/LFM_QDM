@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 from PySide6.QtWidgets import QApplication
 
-sys.path.insert(0, str(Path(__file__).parent))              # odmr_app/ root
-sys.path.insert(0, str(Path(__file__).parent.parent))       # GUI/ root
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))  # project root
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))  # project root (lowest priority)
+sys.path.insert(0, str(Path(__file__).parent.parent))         # GUI/ root
+sys.path.insert(0, str(Path(__file__).parent))                # odmr_app/ root (highest priority)
 
 from odmr_main_window import ODMRMainWindow
 from state.odmr_state import ODMRAppState
