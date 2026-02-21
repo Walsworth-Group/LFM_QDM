@@ -579,19 +579,135 @@ class DeviceRegistry:
 
 ---
 
+## Testing
+
+### Install
+
+```bash
+pip install pytest pytest-qt
+```
+
+### Three layers of tests (write all three)
+
+**1. Unit tests** — test one class in isolation with `MagicMock` for hardware:
+```python
+from unittest.mock import MagicMock
+state.sg384_controller = MagicMock()
+worker = AcquisitionWorker(state, simulation_mode=True)
+worker.start(); worker.wait(15000)
+```
+
+**2. Smoke tests** (`tests/test_smoke.py`) — import and instantiate every key class; no logic:
+```python
+def test_state_instantiates():
+    state = AppState()
+    assert state.is_running is False
+
+def test_main_window_instantiates():
+    state = AppState()
+    state._simulation_mode = True
+    win = MainWindow(app_state=state)
+    assert win._sweep_handler is not None
+    win.close()
+```
+Smoke tests catch the class of bugs visible at app startup: import errors, missing methods called in `__init__`, wrong signal types. They take <2 s and require no hardware.
+
+**3. GUI integration tests** (`tests/test_gui_integration.py`) — use `qtbot` to click buttons and wait for signals:
+```python
+def test_start_button_sets_running(qtbot):
+    win = make_sim_window()
+    qtbot.addWidget(win)
+    win.show()
+    received = []
+    win.state.measurement_running_changed.connect(received.append)
+    win._tab_handler.ui.start_btn.click()
+    deadline = time.monotonic() + 2.0
+    while not received and time.monotonic() < deadline:
+        app.processEvents(); time.sleep(0.02)
+    assert True in received
+    win.close()
+```
+Integration tests catch: wrong button wiring, missing state transitions, slots that crash on first invocation, camera mode not restored after sweep.
+
+### The simulation/hardware code path rule
+
+**Simulation and hardware MUST share the same measurement loop.** If they diverge, tests in simulation mode will not catch hardware bugs.
+
+**Wrong pattern** (diverged paths):
+```python
+def _run_measurement(self):
+    if self.simulation_mode:
+        data = vectorized_sim()      # one-shot, no per-step loop
+        for i in range(n): time.sleep(0.01); self.progress.emit(i, n)
+    else:
+        for i, freq in enumerate(freqs):
+            if self._stop_requested: break
+            measure_step(sg384, camera, freq, ...)
+            self.progress.emit(i + 1, n)
+```
+
+**Right pattern** (unified loop with `_measure_step`):
+```python
+def _run_measurement(self):
+    if self.simulation_mode:
+        _precomputed = run_simulation(freqs, ...)   # compute once before loop
+    for i, freq in enumerate(freqs):
+        if self._stop_requested: break
+        self._measure_step(i, _precomputed, sg384, camera, freq, ...)
+        self.progress.emit(i + 1, total)
+
+def _measure_step(self, idx, sim_data, sg384, camera, freq, ...):
+    if self.simulation_mode:
+        self._cube[idx] += sim_data[idx]
+        time.sleep(0.005)           # hold lock briefly for lock tests
+    else:
+        measure_odmr_point(sg384, camera, freq, ...)
+```
+
+With the unified loop: stop checks, progress granularity, and lock acquisition are all exercised identically in tests and production.
+
+### Key smoke test patterns
+
+**Signal carries the right type** (catches CameraMode ValueError class of bug):
+```python
+def test_mode_signal_carries_string():
+    state = AppState()
+    received = []
+    state.mode_changed.connect(lambda v: received.append(v))
+    state.mode = Mode.STREAMING
+    assert received == ["streaming"]   # not the enum object
+```
+
+**Hidden vestigial widgets**:
+```python
+def test_settings_tab_handler():
+    handler = SettingsTabHandler(QWidget(), state)
+    assert not handler.ui.deprecated_spin.isVisible()
+```
+
+### Run all tests
+
+```bash
+cd GUI/odmr_app
+python -m pytest tests/ -v
+```
+
+---
+
 ## Checklist for New Apps
 
 - [ ] `AppState` (QObject) with subsystem-prefixed properties and signals
 - [ ] `_CONFIG_KEYS` list + `get_config()` / `load_config()` for JSON persistence
 - [ ] Worker thread(s) for ALL hardware I/O; no blocking in main thread
 - [ ] Short-lived workers: `_stop_requested` checked **per innermost step**
+- [ ] Simulation and hardware share the same per-step measurement loop (`_measure_step` pattern)
 - [ ] Polling workers: non-blocking `sg384_lock.acquire(blocking=False)`
 - [ ] Tab handlers: `_add_programmatic_widgets()` → `_connect_widgets()` → `_sync_from_state()`
 - [ ] `blockSignals(True/False)` in `_sync_from_state` to avoid feedback loops
 - [ ] `closeEvent`: stop all workers, `worker.wait()`, save config
 - [ ] Accept optional `state` param for multi-app launcher
 - [ ] Simulation mode for testing without hardware (`simulation_mode=True`)
-- [ ] Tests: use `MagicMock` + `simulation_mode=True`, no hardware contact
+- [ ] Tests: unit tests + smoke tests (`test_smoke.py`) + GUI integration tests (`test_gui_integration.py`)
 - [ ] Backup to `legacy/` before major refactoring
 
 ---

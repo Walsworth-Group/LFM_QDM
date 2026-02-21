@@ -299,97 +299,73 @@ class ODMRSweepWorker(QThread):
         sweeps1_done = 0
         sweeps2_done = 0
 
+        # Simulation: pre-compute one pass of synthetic data that will be
+        # replayed step-by-step in the unified loop below.  This ensures
+        # simulation and hardware share the same loop structure — stop checks,
+        # progress emissions, and averaging logic are tested identically.
+        if self.simulation_mode:
+            _sim_cube1 = np.zeros_like(cube1)
+            _sim_cube2 = np.zeros_like(cube2)
+            qdm.run_simulation_sweep(
+                freqlist1, ref_freq, settings, sim_field_map,
+                _sim_cube1, _SilentPbar(n_steps1), 1,
+            )
+            qdm.run_simulation_sweep(
+                freqlist2, ref_freq, settings, sim_field_map,
+                _sim_cube2, _SilentPbar(n_steps2), 1,
+            )
+        else:
+            _sim_cube1 = _sim_cube2 = None
+
+        sg384 = handles.get('sg384')
+        camera = handles.get('camera_instance')
+        settling_time = settings['srs']['settling_time']
+        n_frames = settings['camera']['n_frames']
+
         with state.sg384_lock:
             for sweep_num in range(1, num_sweeps + 1):
                 if self._stop_requested:
                     break
 
-                if self.simulation_mode:
-                    # Vectorized simulation — run both transitions at once,
-                    # then emit fake per-step progress while sleeping so that
-                    # the lock is measurably held in tests.
-                    pbar1 = _SilentPbar(total=n_steps1 * num_sweeps)
-                    pbar1.n = (sweep_num - 1) * n_steps1
-                    qdm.run_simulation_sweep(
-                        freqlist1, ref_freq, settings, sim_field_map,
-                        cube1, pbar1, sweep_num,
-                    )
-                    sweeps1_done += 1
-                    pbar2 = _SilentPbar(total=n_steps2 * num_sweeps)
-                    pbar2.n = (sweep_num - 1) * n_steps2
-                    qdm.run_simulation_sweep(
-                        freqlist2, ref_freq, settings, sim_field_map,
-                        cube2, pbar2, sweep_num,
-                    )
-                    sweeps2_done += 1
-                    # Emit per-step progress with a sleep per step so that
-                    # the total lock-hold time matches the original behaviour
-                    # (0.015 s * (n_steps1 + n_steps2)) and tests can observe
-                    # the lock being held at the 100 ms probe point.
-                    spec1_sim = np.nanmean(cube1, axis=(1, 2)) / sweeps1_done
-                    spec2_sim = np.nanmean(cube2, axis=(1, 2)) / sweeps2_done
-                    for _ in range(n_steps1 + n_steps2):
-                        if self._stop_requested:
-                            break
-                        time.sleep(0.015)
-                        steps_done += 1
-                        self.sweep_progress.emit(steps_done, total_steps)
-                        if steps_done % emit_every == 0:
-                            self.spectrum_updated.emit(
-                                freqlist1, spec1_sim,
-                                freqlist2, spec2_sim,
-                                sweep_num,
-                            )
-
-                else:
-                    # Hardware: step through each frequency point individually so
-                    # that stop requests and progress updates happen per-step.
-                    sg384 = handles['sg384']
-                    camera = handles['camera_instance']
-                    settling_time = settings['srs']['settling_time']
-                    n_frames = settings['camera']['n_frames']
-
-                    # --- Transition 1 ---
-                    for i, freq in enumerate(freqlist1):
-                        if self._stop_requested:
-                            break
-                        qdm.measure_odmr_point(
-                            sg384, camera, freq, ref_freq,
-                            settling_time, n_frames, cube1, i,
-                        )
-                        steps_done += 1
-                        self.sweep_progress.emit(steps_done, total_steps)
-                        if steps_done % emit_every == 0:
-                            spec1 = np.nanmean(cube1, axis=(1, 2)) / sweep_num
-                            # cube2 may be partial; show zeros for unscanned sweep
-                            spec2 = (np.nanmean(cube2, axis=(1, 2)) / sweeps2_done
-                                     if sweeps2_done > 0
-                                     else np.zeros(n_steps2))
-                            self.spectrum_updated.emit(
-                                freqlist1, spec1, freqlist2, spec2, sweep_num)
-
+                # --- Transition 1 ---
+                for i, freq in enumerate(freqlist1):
                     if self._stop_requested:
                         break
-                    sweeps1_done += 1
+                    self._measure_step(
+                        cube1, i, _sim_cube1, sg384, camera,
+                        freq, ref_freq, settling_time, n_frames,
+                    )
+                    steps_done += 1
+                    self.sweep_progress.emit(steps_done, total_steps)
+                    if steps_done % emit_every == 0:
+                        spec1 = np.nanmean(cube1, axis=(1, 2)) / sweep_num
+                        spec2 = (np.nanmean(cube2, axis=(1, 2)) / sweeps2_done
+                                 if sweeps2_done > 0 else np.zeros(n_steps2))
+                        self.spectrum_updated.emit(
+                            freqlist1, spec1, freqlist2, spec2, sweep_num)
 
-                    # --- Transition 2 ---
-                    for i, freq in enumerate(freqlist2):
-                        if self._stop_requested:
-                            break
-                        qdm.measure_odmr_point(
-                            sg384, camera, freq, ref_freq,
-                            settling_time, n_frames, cube2, i,
-                        )
-                        steps_done += 1
-                        self.sweep_progress.emit(steps_done, total_steps)
-                        if steps_done % emit_every == 0:
-                            spec1 = np.nanmean(cube1, axis=(1, 2)) / sweeps1_done
-                            spec2 = np.nanmean(cube2, axis=(1, 2)) / sweep_num
-                            self.spectrum_updated.emit(
-                                freqlist1, spec1, freqlist2, spec2, sweep_num)
+                if self._stop_requested:
+                    break
+                sweeps1_done += 1
 
-                    if not self._stop_requested:
-                        sweeps2_done += 1
+                # --- Transition 2 ---
+                for i, freq in enumerate(freqlist2):
+                    if self._stop_requested:
+                        break
+                    self._measure_step(
+                        cube2, i, _sim_cube2, sg384, camera,
+                        freq, ref_freq, settling_time, n_frames,
+                    )
+                    steps_done += 1
+                    self.sweep_progress.emit(steps_done, total_steps)
+                    if steps_done % emit_every == 0:
+                        spec1 = np.nanmean(cube1, axis=(1, 2)) / sweeps1_done
+                        spec2 = np.nanmean(cube2, axis=(1, 2)) / sweep_num
+                        self.spectrum_updated.emit(
+                            freqlist1, spec1, freqlist2, spec2, sweep_num)
+
+                if not self._stop_requested:
+                    sweeps2_done += 1
 
             # Keep the lock held during post-processing/fitting so that
             # SG384Worker idle polls are blocked for the whole operation.
@@ -455,6 +431,58 @@ class ODMRSweepWorker(QThread):
     # ------------------------------------------------------------------
     # Helper methods
     # ------------------------------------------------------------------
+
+    def _measure_step(
+        self,
+        cube: np.ndarray,
+        idx: int,
+        sim_cube: Optional[np.ndarray],
+        sg384,
+        camera,
+        freq: float,
+        ref_freq: float,
+        settling_time: float,
+        n_frames: int,
+    ) -> None:
+        """
+        Execute one frequency-step measurement (hardware or simulation replay).
+
+        In simulation mode, adds pre-computed data from ``sim_cube[idx]`` into
+        ``cube[idx]`` and sleeps briefly so that ``sg384_lock`` is held for a
+        measurable duration in tests.  In hardware mode, calls
+        ``qdm.measure_odmr_point``.
+
+        By sharing this method for both paths the per-step stop checks and
+        progress-emit logic in the caller are exercised identically in tests
+        and in production.
+
+        Parameters
+        ----------
+        cube : np.ndarray
+            Accumulated data cube of shape ``(n_freqs, ny, nx)``; updated in-place.
+        idx : int
+            Frequency step index into ``cube`` and ``sim_cube``.
+        sim_cube : np.ndarray or None
+            Pre-computed single-pass synthetic cube; ``None`` in hardware mode.
+        sg384, camera
+            Hardware handles (unused in simulation).
+        freq : float
+            Current microwave frequency in GHz (unused in simulation).
+        ref_freq : float
+            Reference frequency in GHz (unused in simulation).
+        settling_time : float
+            MW settling pause in seconds (unused in simulation).
+        n_frames : int
+            Camera frames to average per point (unused in simulation).
+        """
+        if self.simulation_mode:
+            cube[idx] += sim_cube[idx]
+            time.sleep(0.005)  # hold sg384_lock briefly so lock tests pass
+        else:
+            qdm.measure_odmr_point(
+                sg384, camera, freq, ref_freq,
+                settling_time, n_frames, cube, idx,
+            )
 
     @staticmethod
     def _safe_fit(cube: np.ndarray, freqlist: np.ndarray, n_lorentz: int) -> Optional[dict]:
