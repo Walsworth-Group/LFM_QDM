@@ -173,14 +173,14 @@ class ODMRAppState(QObject):
         # Per-operation camera settings (sweep)
         self._sweep_exposure_time_us: int = 10000
         self._sweep_n_frames_per_point: int = 5
-        self._sweep_hw_bin_x: int = 1   # hardware binning, X (columns)
-        self._sweep_hw_bin_y: int = 1   # hardware binning, Y (rows)
+        self._sweep_hw_bin_x: int = 4   # hardware binning, X (columns); max=4 for acA1920
+        self._sweep_hw_bin_y: int = 4   # hardware binning, Y (rows);    max=4 for acA1920
 
         # Per-operation camera settings (magnetometry)
         self._mag_exposure_time_us: int = 10000
         self._mag_n_frames_per_point: int = 5
-        self._mag_hw_bin_x: int = 1     # hardware binning, X (columns)
-        self._mag_hw_bin_y: int = 1     # hardware binning, Y (rows)
+        self._mag_hw_bin_x: int = 4     # hardware binning, X (columns); max=4 for acA1920
+        self._mag_hw_bin_y: int = 4     # hardware binning, Y (rows);    max=4 for acA1920
 
         # ------------------------------------------------------------------
         # Sweep subsystem
