@@ -8,9 +8,10 @@ from pathlib import Path
 from PySide6.QtCore import Slot
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QInputDialog,
-    QLabel, QSpinBox, QComboBox, QDoubleSpinBox, QPushButton,
+    QLabel, QSpinBox, QComboBox,
 )
 import pyqtgraph as pg
+from scipy.ndimage import gaussian_filter
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -72,19 +73,19 @@ class MagnetometryTabHandler:
         self._mag_frames_spin.setValue(state.mag_n_frames_per_point)
         form.addRow(lbl_frames, self._mag_frames_spin)
 
-        lbl_binx = QLabel("HW Bin X (cols):")
         self._mag_hw_bin_x_spin = QSpinBox()
         self._mag_hw_bin_x_spin.setMinimum(1)
         self._mag_hw_bin_x_spin.setMaximum(8)
         self._mag_hw_bin_x_spin.setValue(state.mag_hw_bin_x)
-        form.addRow(lbl_binx, self._mag_hw_bin_x_spin)
-
-        lbl_biny = QLabel("HW Bin Y (rows):")
         self._mag_hw_bin_y_spin = QSpinBox()
         self._mag_hw_bin_y_spin.setMinimum(1)
         self._mag_hw_bin_y_spin.setMaximum(8)
         self._mag_hw_bin_y_spin.setValue(state.mag_hw_bin_y)
-        form.addRow(lbl_biny, self._mag_hw_bin_y_spin)
+        hw_bin_row = QHBoxLayout()
+        hw_bin_row.addWidget(self._mag_hw_bin_x_spin)
+        hw_bin_row.addWidget(QLabel("/"))
+        hw_bin_row.addWidget(self._mag_hw_bin_y_spin)
+        form.addRow(QLabel("HW Bin (X / Y):"), hw_bin_row)
 
         # --- Inject InflectionTableWidget ---
         self._inf_table = InflectionTableWidget()
@@ -102,11 +103,13 @@ class MagnetometryTabHandler:
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Display:"))
         self._display_mode_combo = QComboBox()
-        self._display_mode_combo.addItems(
-            ["Live Preview", "Raw", "Denoised", "Processed"])
+        self._display_mode_combo.addItems(["Raw", "Denoised", "Processed"])
         self._display_mode_combo.setToolTip(
-            "Choose what to display: live cumulative average or one of the "
-            "three analysis outputs (computed after measurement completes).")
+            "Live display mode during acquisition and for post-analysis view.\n"
+            "Raw = running mean field map.\n"
+            "Denoised = Gaussian-smoothed mean (sigma from Analysis tab).\n"
+            "Processed = Raw minus Denoised (high-frequency residuals)."
+        )
         mode_row.addWidget(self._display_mode_combo)
         mode_row.addStretch()
         preview_layout.addLayout(mode_row)
@@ -249,20 +252,15 @@ class MagnetometryTabHandler:
 
     @Slot(str)
     def _on_display_mode_changed(self, mode: str):
-        """Switch the preview image to the selected mode."""
-        if mode == "Live Preview":
-            # Nothing to do — live preview updates on sample_acquired
-            return
+        """Switch the preview image to the selected mode using the last known data."""
         if self._last_analysis_result is not None:
             self._show_analysis_map(self._last_analysis_result, mode)
 
     @Slot(dict)
     def _on_analysis_result_for_display(self, result: dict):
-        """Cache new analysis result and refresh display if not in Live Preview mode."""
+        """Cache new analysis result and refresh display in current mode."""
         self._last_analysis_result = result
-        mode = self._display_mode_combo.currentText()
-        if mode != "Live Preview":
-            self._show_analysis_map(result, mode)
+        self._show_analysis_map(result, self._display_mode_combo.currentText())
 
     def _show_analysis_map(self, result: dict, mode: str):
         """Display the named analysis map in the preview view."""
@@ -435,11 +433,21 @@ class MagnetometryTabHandler:
 
     @Slot(int, object)
     def _on_sample_acquired(self, n, field_gauss):
-        """Update live cumulative average preview if in Live Preview mode."""
-        if self._display_mode_combo.currentText() == "Live Preview":
-            self._preview_view.setImage(field_gauss.T, autoLevels=True)
-            self._preview_view.setColorMap(_make_rdbu_colormap())
-            self._preview_colorbar.auto_range()
+        """Update live preview in the currently selected display mode."""
+        mode = self._display_mode_combo.currentText()
+        sigma = self.state.analysis_gaussian_sigma
+
+        if mode == "Raw":
+            display = field_gauss
+        elif mode == "Denoised":
+            display = gaussian_filter(field_gauss.astype(np.float64), sigma=sigma).astype(np.float32)
+        else:  # "Processed"
+            denoised = gaussian_filter(field_gauss.astype(np.float64), sigma=sigma).astype(np.float32)
+            display = field_gauss - denoised
+
+        self._preview_view.setImage(display.T, autoLevels=True)
+        self._preview_view.setColorMap(_make_rdbu_colormap())
+        self._preview_colorbar.auto_range()
 
     @Slot(dict)
     def _on_mag_completed(self, result):

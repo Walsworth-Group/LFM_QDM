@@ -13,9 +13,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from state.odmr_state import ODMRAppState
 from widgets.field_map_display import FieldMapDisplayWidget
+from workers.analysis_worker import AnalysisWorker
 from ui.ui_odmr_analysis_tab import Ui_analysis_tab_content
-
-import qdm_gen as qdm
 
 
 class AnalysisTabHandler:
@@ -56,6 +55,8 @@ class AnalysisTabHandler:
         btn_row.addStretch()
         btn_row.addWidget(auto_all_btn)
         layout.addLayout(btn_row)
+
+        self._analysis_worker = None   # current AnalysisWorker thread (or None)
 
         self._connect_widgets()
         self._sync_from_state()
@@ -124,7 +125,10 @@ class AnalysisTabHandler:
 
     def _run_analysis(self, stability_cube: np.ndarray):
         """
-        Run analyze_multi_point_magnetometry on the given stability cube.
+        Spawn an AnalysisWorker to run field-map analysis in the background.
+
+        The UI remains responsive while numpy/scipy computations execute in the
+        worker thread.  The Reanalyze button is disabled while analysis runs.
 
         Parameters
         ----------
@@ -132,20 +136,40 @@ class AnalysisTabHandler:
             The stability cube in GHz units, shape (num_samples, ny, nx).
         """
         s = self.state
-        try:
-            field_result = qdm.analyze_multi_point_magnetometry(
-                stability_cube,
-                outlier_sigma=s.analysis_outlier_sigma,
-                reference_mode=s.analysis_reference_mode,
-                denoise_method=s.analysis_denoise_method,
-                gaussian_sigma=s.analysis_gaussian_sigma,
-                show_plot=False,
-                save_fig=False,
-            )
-            s.analysis_field_map_result = field_result
-            s.analysis_completed.emit(field_result)
-        except Exception as e:
-            QMessageBox.critical(None, "Analysis Error", str(e))
+
+        # Cancel any in-progress analysis (rare but possible on rapid re-trigger)
+        if self._analysis_worker is not None and self._analysis_worker.isRunning():
+            self._analysis_worker.quit()
+            self._analysis_worker.wait(2000)
+
+        self.ui.analysis_reanalyze_btn.setEnabled(False)
+
+        worker = AnalysisWorker(
+            stability_cube,
+            outlier_sigma=s.analysis_outlier_sigma,
+            reference_mode=s.analysis_reference_mode,
+            denoise_method=s.analysis_denoise_method,
+            gaussian_sigma=s.analysis_gaussian_sigma,
+        )
+        worker.analysis_completed.connect(self._on_analysis_worker_completed)
+        worker.analysis_failed.connect(self._on_analysis_worker_failed)
+        self._analysis_worker = worker
+        worker.start()
+
+    @Slot(dict)
+    def _on_analysis_worker_completed(self, field_result: dict):
+        """Handle successful completion of the AnalysisWorker."""
+        self.ui.analysis_reanalyze_btn.setEnabled(True)
+        s = self.state
+        s.analysis_field_map_result = field_result
+        s.analysis_completed.emit(field_result)
+
+    @Slot(str)
+    def _on_analysis_worker_failed(self, error_msg: str):
+        """Handle AnalysisWorker failure."""
+        self.ui.analysis_reanalyze_btn.setEnabled(True)
+        self.state.status_message.emit(f"Analysis error: {error_msg[:80]}")
+        QMessageBox.critical(None, "Analysis Error", error_msg)
 
     @Slot(dict)
     def _on_analysis_completed(self, result):

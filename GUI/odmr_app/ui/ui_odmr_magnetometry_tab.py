@@ -109,18 +109,20 @@ class Ui_magnetometry_tab_content(object):
 
         self.formLayout.setWidget(1, QFormLayout.ItemRole.LabelRole, self.label1)
 
+        self.hboxLayout2 = QHBoxLayout()
+        self.hboxLayout2.setObjectName(u"hboxLayout2")
         self.mag_bin_x_spin = QSpinBox(self.mag_params_group)
         self.mag_bin_x_spin.setObjectName(u"mag_bin_x_spin")
         self.mag_bin_x_spin.setMinimum(1)
         self.mag_bin_x_spin.setMaximum(32)
         self.mag_bin_x_spin.setValue(1)
 
-        self.formLayout.setWidget(1, QFormLayout.ItemRole.FieldRole, self.mag_bin_x_spin)
+        self.hboxLayout2.addWidget(self.mag_bin_x_spin)
 
         self.label2 = QLabel(self.mag_params_group)
         self.label2.setObjectName(u"label2")
 
-        self.formLayout.setWidget(2, QFormLayout.ItemRole.LabelRole, self.label2)
+        self.hboxLayout2.addWidget(self.label2)
 
         self.mag_bin_y_spin = QSpinBox(self.mag_params_group)
         self.mag_bin_y_spin.setObjectName(u"mag_bin_y_spin")
@@ -128,12 +130,15 @@ class Ui_magnetometry_tab_content(object):
         self.mag_bin_y_spin.setMaximum(32)
         self.mag_bin_y_spin.setValue(1)
 
-        self.formLayout.setWidget(2, QFormLayout.ItemRole.FieldRole, self.mag_bin_y_spin)
+        self.hboxLayout2.addWidget(self.mag_bin_y_spin)
+
+
+        self.formLayout.setLayout(1, QFormLayout.ItemRole.FieldRole, self.hboxLayout2)
 
         self.label3 = QLabel(self.mag_params_group)
         self.label3.setObjectName(u"label3")
 
-        self.formLayout.setWidget(3, QFormLayout.ItemRole.LabelRole, self.label3)
+        self.formLayout.setWidget(2, QFormLayout.ItemRole.LabelRole, self.label3)
 
         self.mag_num_samples_spin = QSpinBox(self.mag_params_group)
         self.mag_num_samples_spin.setObjectName(u"mag_num_samples_spin")
@@ -141,12 +146,12 @@ class Ui_magnetometry_tab_content(object):
         self.mag_num_samples_spin.setMaximum(100000)
         self.mag_num_samples_spin.setValue(200)
 
-        self.formLayout.setWidget(3, QFormLayout.ItemRole.FieldRole, self.mag_num_samples_spin)
+        self.formLayout.setWidget(2, QFormLayout.ItemRole.FieldRole, self.mag_num_samples_spin)
 
         self.label4 = QLabel(self.mag_params_group)
         self.label4.setObjectName(u"label4")
 
-        self.formLayout.setWidget(4, QFormLayout.ItemRole.LabelRole, self.label4)
+        self.formLayout.setWidget(3, QFormLayout.ItemRole.LabelRole, self.label4)
 
         self.mag_live_interval_spin = QSpinBox(self.mag_params_group)
         self.mag_live_interval_spin.setObjectName(u"mag_live_interval_spin")
@@ -154,7 +159,7 @@ class Ui_magnetometry_tab_content(object):
         self.mag_live_interval_spin.setMaximum(1000)
         self.mag_live_interval_spin.setValue(10)
 
-        self.formLayout.setWidget(4, QFormLayout.ItemRole.FieldRole, self.mag_live_interval_spin)
+        self.formLayout.setWidget(3, QFormLayout.ItemRole.FieldRole, self.mag_live_interval_spin)
 
 
         self.mag_controls_vbox.addWidget(self.mag_params_group)
@@ -163,21 +168,21 @@ class Ui_magnetometry_tab_content(object):
         self.mag_run_group.setObjectName(u"mag_run_group")
         self.vboxLayout1 = QVBoxLayout(self.mag_run_group)
         self.vboxLayout1.setObjectName(u"vboxLayout1")
-        self.hboxLayout2 = QHBoxLayout()
-        self.hboxLayout2.setObjectName(u"hboxLayout2")
+        self.hboxLayout3 = QHBoxLayout()
+        self.hboxLayout3.setObjectName(u"hboxLayout3")
         self.mag_start_btn = QPushButton(self.mag_run_group)
         self.mag_start_btn.setObjectName(u"mag_start_btn")
 
-        self.hboxLayout2.addWidget(self.mag_start_btn)
+        self.hboxLayout3.addWidget(self.mag_start_btn)
 
         self.mag_stop_btn = QPushButton(self.mag_run_group)
         self.mag_stop_btn.setObjectName(u"mag_stop_btn")
         self.mag_stop_btn.setEnabled(False)
 
-        self.hboxLayout2.addWidget(self.mag_stop_btn)
+        self.hboxLayout3.addWidget(self.mag_stop_btn)
 
 
-        self.vboxLayout1.addLayout(self.hboxLayout2)
+        self.vboxLayout1.addLayout(self.hboxLayout3)
 
         self.mag_progress_bar = QProgressBar(self.mag_run_group)
         self.mag_progress_bar.setObjectName(u"mag_progress_bar")
@@ -195,27 +200,27 @@ class Ui_magnetometry_tab_content(object):
 
         self.mag_save_group = QGroupBox(self.mag_controls_panel)
         self.mag_save_group.setObjectName(u"mag_save_group")
-        self.hboxLayout3 = QHBoxLayout(self.mag_save_group)
-        self.hboxLayout3.setObjectName(u"hboxLayout3")
+        self.hboxLayout4 = QHBoxLayout(self.mag_save_group)
+        self.hboxLayout4.setObjectName(u"hboxLayout4")
         self.label5 = QLabel(self.mag_save_group)
         self.label5.setObjectName(u"label5")
 
-        self.hboxLayout3.addWidget(self.label5)
+        self.hboxLayout4.addWidget(self.label5)
 
         self.mag_prefix_edit = QLineEdit(self.mag_save_group)
         self.mag_prefix_edit.setObjectName(u"mag_prefix_edit")
 
-        self.hboxLayout3.addWidget(self.mag_prefix_edit)
+        self.hboxLayout4.addWidget(self.mag_prefix_edit)
 
         self.mag_save_npz_btn = QPushButton(self.mag_save_group)
         self.mag_save_npz_btn.setObjectName(u"mag_save_npz_btn")
 
-        self.hboxLayout3.addWidget(self.mag_save_npz_btn)
+        self.hboxLayout4.addWidget(self.mag_save_npz_btn)
 
         self.mag_save_png_btn = QPushButton(self.mag_save_group)
         self.mag_save_png_btn.setObjectName(u"mag_save_png_btn")
 
-        self.hboxLayout3.addWidget(self.mag_save_png_btn)
+        self.hboxLayout4.addWidget(self.mag_save_png_btn)
 
 
         self.mag_controls_vbox.addWidget(self.mag_save_group)
@@ -248,8 +253,8 @@ class Ui_magnetometry_tab_content(object):
         self.mag_points_save_btn.setText(QCoreApplication.translate("magnetometry_tab_content", u"Save Points to File", None))
         self.mag_params_group.setTitle(QCoreApplication.translate("magnetometry_tab_content", u"Measurement Parameters", None))
         self.label.setText(QCoreApplication.translate("magnetometry_tab_content", u"Ref freq (GHz):", None))
-        self.label1.setText(QCoreApplication.translate("magnetometry_tab_content", u"Bin X:", None))
-        self.label2.setText(QCoreApplication.translate("magnetometry_tab_content", u"Bin Y:", None))
+        self.label1.setText(QCoreApplication.translate("magnetometry_tab_content", u"Sw Bin (X / Y):", None))
+        self.label2.setText(QCoreApplication.translate("magnetometry_tab_content", u"/", None))
         self.label3.setText(QCoreApplication.translate("magnetometry_tab_content", u"Num samples:", None))
         self.label4.setText(QCoreApplication.translate("magnetometry_tab_content", u"Live update every:", None))
         self.mag_run_group.setTitle(QCoreApplication.translate("magnetometry_tab_content", u"Run", None))

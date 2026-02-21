@@ -22,7 +22,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QMainWindow, QVBoxLayout, QMessageBox, QFileDialog, QLabel, QLineEdit,
 )
-from PySide6.QtCore import Slot, QTimer, Qt
+from PySide6.QtCore import Slot, QTimer
 from PySide6.QtWidgets import QApplication
 
 # ---------------------------------------------------------------------------
@@ -102,17 +102,6 @@ class ODMRMainWindow(QMainWindow):
         # The generated UI file omits menubar.addMenu(); add it here.
         self.ui.menubar.addMenu(self.ui.menu_file)
 
-        # -- Status log label (injected below save bar) --------------------
-        self._status_log_label = QLabel("Ready")
-        self._status_log_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self._status_log_label.setStyleSheet(
-            "background-color: #1e1e1e; color: #c8c8c8; "
-            "font-family: monospace; font-size: 11px; "
-            "padding: 3px 8px; border-top: 1px solid #444;"
-        )
-        self._status_log_label.setMaximumHeight(24)
-        self.ui.main_vbox.addWidget(self._status_log_label)
-
         # -- Sub-components -------------------------------------------------
         self._embed_camera_tab()
         self._load_config()
@@ -152,9 +141,8 @@ class ODMRMainWindow(QMainWindow):
 
     @Slot(str)
     def _on_status_message(self, msg: str):
-        """Display a short status message in the log label and status bar."""
-        self._status_log_label.setText(msg)
-        self.statusBar().showMessage(msg, 10_000)
+        """Display a short status message in the Qt status bar (persistent)."""
+        self.statusBar().showMessage(msg)
 
     # ======================================================================
     # Camera tab embedding
