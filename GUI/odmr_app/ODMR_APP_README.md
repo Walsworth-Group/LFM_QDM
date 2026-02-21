@@ -1,0 +1,180 @@
+# ODMR Magnetometry GUI App
+
+PySide6 application for CW ODMR widefield magnetometry with NV centers. Implements the full 4-point differential magnetometry workflow (ODMR frequency sweep → inflection point identification → multi-point stability measurement → field map analysis → sensitivity/Allan variance).
+
+---
+
+## Launching
+
+| Method | Command / File |
+|---|---|
+| Standalone (with console) | `cd GUI && python odmr_app/odmr_app.py` |
+| Standalone (no console) | Double-click `GUI/launch_odmr_silent.vbs` |
+| All apps together | `cd GUI && python launch_all_apps.py` |
+| All apps (no console) | Double-click `GUI/launch_all_silent.vbs` |
+
+---
+
+## Architecture
+
+The app follows a three-layer pattern: **State → Workers → UI**
+
+```
+ODMRAppState (QObject)           ← central source of truth; Qt signals on every change
+    ├── SG384Worker (QThread)    ← polls RF frequency; accepts queued commands
+    ├── ODMRSweepWorker (QThread)← runs both-transition ODMR sweep; fits Lorentzians
+    └── MagnetometryWorker (QThread) ← runs multi-point stability measurement
+```
+
+All hardware access is serialized via `state.sg384_lock` (threading.Lock). Workers acquire the lock before touching the SG384 controller; the RF polling worker backs off non-blockingly when the lock is held.
+
+### File structure
+
+```
+GUI/odmr_app/
+├── odmr_app.py              Entry point (standalone + launcher)
+├── odmr_main_window.py      QMainWindow: RF panel, tabs, save bar, file menu
+├── state/
+│   └── odmr_state.py        ODMRAppState — all signals, properties, config I/O
+├── workers/
+│   ├── sg384_worker.py      SG384Worker — RF polling and command queue
+│   ├── odmr_sweep_worker.py ODMRSweepWorker — two-transition ODMR sweep
+│   └── magnetometry_worker.py MagnetometryWorker — multi-point acquisition
+├── tabs/
+│   ├── settings_tab.py      SettingsTabHandler — instrument + perf parameters
+│   ├── sweep_tab.py         SweepTabHandler — live spectra, inflection table
+│   ├── magnetometry_tab.py  MagnetometryTabHandler — presets, live field preview
+│   ├── analysis_tab.py      AnalysisTabHandler — 3-panel field map + reanalysis
+│   └── sensitivity_tab.py   SensitivityTabHandler — sensitivity map + Allan dev
+├── widgets/
+│   ├── inflection_table.py  InflectionTableWidget — 8-row editable inflection table
+│   └── field_map_display.py FieldMapDisplayWidget — 3-panel pyqtgraph RdBu_r display
+├── ui/
+│   ├── odmr_app_main.ui + ui_odmr_app_main.py
+│   ├── odmr_sweep_tab.ui + ui_odmr_sweep_tab.py
+│   ├── odmr_magnetometry_tab.ui + ui_odmr_magnetometry_tab.py
+│   ├── odmr_analysis_tab.ui + ui_odmr_analysis_tab.py
+│   ├── odmr_sensitivity_tab.ui + ui_odmr_sensitivity_tab.py
+│   └── odmr_settings_tab.ui + ui_odmr_settings_tab.py
+├── config/
+│   ├── odmr_app_config.json     Auto-saved settings (created on first run)
+│   └── presets/
+│       └── default_4pt.json     Built-in 4-point differential preset
+└── tests/
+    ├── test_odmr_state.py
+    ├── test_sg384_worker.py
+    ├── test_odmr_sweep_worker.py
+    └── test_magnetometry_worker.py
+```
+
+---
+
+## Tab overview
+
+### Camera tab
+Embeds the existing `CameraTabWidget` (from `camera_app.py`) for live Basler camera streaming. Camera streaming is automatically stopped when a sweep or magnetometry run begins, and re-enabled when the run ends.
+
+### ODMR Sweep tab
+Runs a two-transition ODMR frequency sweep (`identify_multi_transition_inflection_points` equivalent):
+- Configurable frequency range for each NV transition (lower m=0→−1, upper m=0→+1)
+- Live spectrum update during acquisition
+- After completion: Lorentzian fitting, 8 inflection point extraction, table populated
+- "Send to Magnetometry" button triggers auto-population of the Magnetometry tab
+- Save: `.npz` (raw spectra + inflection data) and `.png` (spectrum plots)
+
+### Magnetometry tab
+Runs multi-point differential magnetometry (`run_multi_point_stability_measurement` equivalent):
+- **InflectionTableWidget**: shows all 8 inflection points; user selects which to use and their parity (+1 signal, −1 signal, 0 reference)
+- **Preset management**: save/load/delete named presets in `config/presets/*.json`; `default_4pt.json` is included (outer 4 points, alternating parity)
+- **Point file I/O**: export/import inflection point data to JSON for session restore
+- Live cumulative average field map preview (pyqtgraph ImageView, updates every N samples)
+- Autosave partial data every N samples to `_magnetometry_partial_autosave.npz`
+- Save: `.npz` (stability cube, freq/slope/parity/baseline lists, metadata) and `.png` (preview)
+
+### Analysis tab
+Post-processes the stability cube into a magnetic field map (`analyze_multi_point_magnetometry`):
+- Auto-runs when magnetometry completes
+- Controls: denoising method (none/gaussian/tv/wavelet/nlm/bilateral), Gaussian sigma, outlier sigma, reference mode (global_mean/roi)
+- Three-panel `FieldMapDisplayWidget`: raw | denoised | processed (RdBu_r colormap, symmetric range)
+- Stats label: mean, std, range of the processed field map
+- Save: `.npz` (all three field maps) and `.png` (matplotlib figure)
+
+### Sensitivity tab
+Computes magnetometer sensitivity (`analyze_stability_data`) and Allan deviation (`analyze_allan_variance`):
+- Optional manual overrides for time-per-point and slope (0.0 = Auto)
+- Sensitivity map displayed in µT/√Hz units
+- Allan deviation on log-log scale; measured + shot-noise-limit curves
+- Save: `.npz` (sensitivity arrays) and `.png` (map + Allan plot)
+
+### Settings tab
+Configures all instrument and performance parameters:
+- SG384 TCP/IP address, RF amplitude
+- Camera serial number (ODMR camera)
+- Performance: RF poll interval, plot throttle FPS, MW settling time, camera flush frames, frames per point, sweep emit interval, live update interval, autosave interval, camera exposure time
+
+---
+
+## Workflow (end-to-end)
+
+1. **Connect RF** — Click "Connect RF" in the RF panel; enter SG384 address in Settings first if needed.
+2. **ODMR Sweep** — Go to ODMR Sweep tab, set frequency ranges for both NV transitions, click "Start Sweep". Live spectra update; inflection points identified automatically after completion.
+3. **Select inflection points** — Switch to Magnetometry tab; inflection table auto-populated. Check rows to use, set parity. Or load a preset.
+4. **Run magnetometry** — Click "Start" in Magnetometry tab. Live field map preview updates. Click "Stop" at any time.
+5. **Analyze** — Switch to Analysis tab; field map auto-displayed. Adjust denoising, click "Reanalyze" as needed.
+6. **Sensitivity** — Switch to Sensitivity tab, click "Compute Sensitivity" then "Allan Deviation".
+7. **Save** — Use individual "Save" buttons per tab, or click "Save All" in the bottom bar to save all tabs at once.
+
+---
+
+## File naming convention
+
+All saved files follow the pattern: `{user_prefix}_{component_name}_{YYYYMMDD_HHMMSS}.ext`
+
+- `user_prefix`: optional text entered in each tab's Prefix field
+- `component_name`: `odmr_freq_sweep` | `multipoint_stability` | `field_map` | `sensitivity`
+- Timestamp can be disabled in the save bar
+
+Files are saved to `{Save Base Path}/{Subfolder}/`.
+
+---
+
+## Simulation mode
+
+When hardware is unavailable, the app generates synthetic NV ODMR data:
+- Set `simulation_mode=True` when constructing workers (set internally via `state._simulation_mode`)
+- Standalone testing: `state._simulation_mode = True` before starting any worker
+
+---
+
+## Configuration persistence
+
+The app auto-saves all settings to `config/odmr_app_config.json` on close. This file is loaded on startup. Use **File → Save Config As** to save to a different location, or **File → Load Config** to restore a saved session.
+
+---
+
+## Running tests
+
+```bash
+cd GUI/odmr_app
+python -m pytest tests/ -v
+```
+
+31 tests covering ODMRAppState, SG384Worker, ODMRSweepWorker, and MagnetometryWorker. All tests use `simulation_mode=True` and `MagicMock` — no hardware contact.
+
+---
+
+## Dependencies
+
+- PySide6 (Qt6 Python bindings)
+- pyqtgraph (live plots and image views)
+- numpy, scipy (numerical processing)
+- qdm_gen, qdm_srs, qdm_basler (project libraries)
+- allantools (optional, required for Allan deviation)
+
+---
+
+## Development notes
+
+- **UI files**: `.ui` files in `ui/` are Qt Designer XML sources. Regenerate Python bindings with: `pyside6-uic -g python odmr_sweep_tab.ui -o ui_odmr_sweep_tab.py` (run from `ui/`). Never edit `ui_*.py` files by hand.
+- **Adding a new tab**: create a `*TabHandler` class in `tabs/`, add a new tab to `odmr_app_main.ui`, instantiate the handler in `ODMRMainWindow.__init__`, add `save_data()` call in `_on_save_all`.
+- **Camera tab isolation**: `odmr_main_window.py` uses `sys.modules` management to prevent the `odmr_app/state/` and `odmr_app/workers/` packages from shadowing `GUI/state/` and `GUI/workers/` when importing `camera_app.py`.
