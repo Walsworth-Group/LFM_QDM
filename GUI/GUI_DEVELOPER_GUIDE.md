@@ -20,6 +20,7 @@ Last updated: 2026-02-17.
 11. [How to Add a New App](#11-how-to-add-a-new-app)
 12. [How to Add a New Feature to an Existing App](#12-how-to-add-a-new-feature-to-an-existing-app)
 13. [Common Pitfalls](#13-common-pitfalls)
+14. [UI Layout Guidelines for QtDesigner Compatibility](#14-ui-layout-guidelines-for-qtdesigner-compatibility)
 
 ---
 
@@ -860,3 +861,11 @@ self.state.data_point_recorded.connect(self.my_handler)
 
 ### Adding a PID monitor interval change doesn't take effect immediately
 `PIDWorker._do_monitoring_update()` sleeps for `self.state.pid_monitor_interval` at the end of each poll. A change to the state value takes effect on the next iteration — there is no need to restart the worker.
+
+## 14. UI Layout Guidelines for QtDesigner Compatibility
+* On layouts: Use QGridLayout for all main panel areas. Set explicit rowStretch and columnStretch values — never rely on implicit stretching. For button bars use QHBoxLayout with explicit addStretch() spacers rather than letting Qt distribute space automatically.
+* On size policies: Every interactive widget (buttons, spinboxes, line edits) should have its sizePolicy set explicitly in the .ui file. Buttons should be Fixed horizontal, Fixed vertical with a named size — never Expanding. Displays and readout labels can be Preferred. Plots and graphs should be Expanding in both directions. This is the single setting that makes the most difference in QtDesigner.
+* On grouping: Use QGroupBox to create named visual sections. Each QGroupBox gets its own QGridLayout. This is the Qt equivalent of LabVIEW's cluster — a named region you can move as a unit in QtDesigner without disturbing its contents.
+* On minimum sizes: For any widget where size matters visually — readout labels, status indicators, the main plot area — set minimumSize explicitly in the .ui file. This gives you a floor that QtDesigner respects when you drag.
+* On spacers: Use explicit QSpacerItem widgets rather than stretch factors. They appear as visible objects in QtDesigner's widget tree and can be selected and deleted directly, which is far more intuitive than hunting for a stretch factor buried in a layout's properties.
+* On splitters: For panels where the human operator might want to resize sections — like a controls panel next to a plot — use QSplitter instead of a fixed layout. This gives both the AI and the human a natural resize handle at runtime.
