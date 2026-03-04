@@ -64,6 +64,7 @@ class ODMRAppState(QObject):
     # RF / microwave subsystem
     rf_connection_changed = Signal(bool)
     rf_frequency_changed = Signal(float)
+    rf_amplitude_changed = Signal(float)
 
     # Sweep subsystem
     sweep_running_changed = Signal(bool)
@@ -79,6 +80,9 @@ class ODMRAppState(QObject):
 
     # Analysis
     analysis_completed = Signal(dict)
+
+    # Background subtraction
+    bg_sub_completed = Signal(dict)
 
     # Camera mode
     camera_mode_changed = Signal(str)
@@ -256,6 +260,19 @@ class ODMRAppState(QObject):
         self._perf_autosave_interval_samples: int = 50
         self._perf_camera_exposure_time_us: int = 10000
 
+        # ------------------------------------------------------------------
+        # Background subtraction subsystem
+        # ------------------------------------------------------------------
+        self.bg_sub_bg_file: str = ""
+        self.bg_sub_sample_file: str = ""
+        self.bg_sub_gaussian_sigma: float = 7.0
+        self.bg_sub_result: dict | None = None
+        # vrange: None = auto-scale; (float, float) = explicit (min, max) in Gauss
+        self.bg_sub_vrange_raw: tuple | None = None
+        self.bg_sub_vrange_denoised: tuple | None = None
+        self.bg_sub_vrange_processed: tuple | None = None
+        self.bg_sub_vrange_subtracted: tuple | None = None
+
     # ==================================================================
     # RF subsystem properties
     # ==================================================================
@@ -288,6 +305,7 @@ class ODMRAppState(QObject):
     @rf_amplitude_dbm.setter
     def rf_amplitude_dbm(self, value: float):
         self._rf_amplitude_dbm = float(value)
+        self.rf_amplitude_changed.emit(self._rf_amplitude_dbm)
 
     @property
     def rf_address(self) -> str:
