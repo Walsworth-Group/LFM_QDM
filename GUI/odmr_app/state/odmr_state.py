@@ -133,6 +133,8 @@ class ODMRAppState(QObject):
         "analysis_gaussian_sigma",
         "analysis_outlier_sigma",
         "analysis_reference_mode",
+        # Background subtraction
+        "bg_sub_gaussian_sigma",
         # Camera
         "odmr_camera_serial",
         # Save settings
@@ -266,12 +268,12 @@ class ODMRAppState(QObject):
         self.bg_sub_bg_file: str = ""
         self.bg_sub_sample_file: str = ""
         self.bg_sub_gaussian_sigma: float = 7.0
-        self.bg_sub_result: dict | None = None
+        self.bg_sub_result = None          # dict result from analyze_background_subtraction
         # vrange: None = auto-scale; (float, float) = explicit (min, max) in Gauss
-        self.bg_sub_vrange_raw: tuple | None = None
-        self.bg_sub_vrange_denoised: tuple | None = None
-        self.bg_sub_vrange_processed: tuple | None = None
-        self.bg_sub_vrange_subtracted: tuple | None = None
+        self.bg_sub_vrange_raw = None
+        self.bg_sub_vrange_denoised = None
+        self.bg_sub_vrange_processed = None
+        self.bg_sub_vrange_subtracted = None
 
     # ==================================================================
     # RF subsystem properties
