@@ -74,6 +74,21 @@ class Ui_ODMRMainWindow(object):
 
         self.rf_hbox.addWidget(self.rf_amp_label)
 
+        self.rf_amp_spinbox = QDoubleSpinBox(self.rf_group)
+        self.rf_amp_spinbox.setObjectName(u"rf_amp_spinbox")
+        self.rf_amp_spinbox.setDecimals(1)
+        self.rf_amp_spinbox.setMinimum(-47.0)
+        self.rf_amp_spinbox.setMaximum(16.5)
+        self.rf_amp_spinbox.setSingleStep(0.1)
+        self.rf_amp_spinbox.setValue(-10.0)
+
+        self.rf_hbox.addWidget(self.rf_amp_spinbox)
+
+        self.rf_set_amp_btn = QPushButton(self.rf_group)
+        self.rf_set_amp_btn.setObjectName(u"rf_set_amp_btn")
+
+        self.rf_hbox.addWidget(self.rf_set_amp_btn)
+
         self.rf_connect_btn = QPushButton(self.rf_group)
         self.rf_connect_btn.setObjectName(u"rf_connect_btn")
 
@@ -189,6 +204,8 @@ class Ui_ODMRMainWindow(object):
         self.rf_freq_spinbox.setSuffix(QCoreApplication.translate("ODMRMainWindow", u" GHz", None))
         self.rf_set_btn.setText(QCoreApplication.translate("ODMRMainWindow", u"Set Freq", None))
         self.rf_amp_label.setText(QCoreApplication.translate("ODMRMainWindow", u"Amp: \u2014 dBm", None))
+        self.rf_amp_spinbox.setSuffix(QCoreApplication.translate("ODMRMainWindow", u" dBm", None))
+        self.rf_set_amp_btn.setText(QCoreApplication.translate("ODMRMainWindow", u"Set Amp", None))
         self.rf_connect_btn.setText(QCoreApplication.translate("ODMRMainWindow", u"Connect RF", None))
         self.tab_widget.setTabText(self.tab_widget.indexOf(self.camera_tab), QCoreApplication.translate("ODMRMainWindow", u"Camera", None))
         self.tab_widget.setTabText(self.tab_widget.indexOf(self.sweep_tab), QCoreApplication.translate("ODMRMainWindow", u"ODMR Sweep", None))

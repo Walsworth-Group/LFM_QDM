@@ -85,6 +85,42 @@ class SG384Controller:
         except VisaIOError as e:
             self._log(f"   ❌ ERROR communicating with SG384: {e}")
 
+    def get_amplitude(self) -> float:
+        """
+        Query the current RF output amplitude.
+
+        Returns
+        -------
+        float
+            Amplitude in dBm, or 0.0 if not connected or query fails.
+        """
+        if not self.instrument:
+            return 0.0
+        try:
+            response = self.instrument.query('AMPR?')
+            return float(response.strip())
+        except Exception as e:
+            self._log(f"   ❌ ERROR reading amplitude: {e}")
+            return 0.0
+
+    def get_frequency(self) -> float:
+        """
+        Query the current RF output frequency.
+
+        Returns
+        -------
+        float
+            Frequency in GHz, or 0.0 if not connected or query fails.
+        """
+        if not self.instrument:
+            return 0.0
+        try:
+            response = self.instrument.query('FREQ?')
+            return float(response.strip()) / 1e9   # SG384 returns Hz
+        except Exception as e:
+            self._log(f"   ❌ ERROR reading frequency: {e}")
+            return 0.0
+
     def set_amplitude(self, level: Union[int, float]):
         if not self.instrument:
             self._log("❌ ERROR: Connection not open. Cannot set amplitude.")
@@ -93,7 +129,7 @@ class SG384Controller:
         command = f'AMPR {level} dBm'
         try:
             self.instrument.write(command)
-            if self._verbose:
+            if self._verify_on_set and self._verbose:
                 readback = self.instrument.query('AMPR?')
                 self._log(f"   Amplitude set to: {readback.strip()} dBm")
 

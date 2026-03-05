@@ -43,7 +43,9 @@ def run_odmr_sweep(
     save_fig=False,
     save_path=None,
     subfolder="",
-    logger=None
+    logger=None,
+    fit_tolerance=None,
+    max_iters=None
 ):
     """
     High-level function to execute a complete ODMR frequency sweep experiment.
@@ -81,6 +83,12 @@ def run_odmr_sweep(
         Subfolder for saving data and figures.
     logger : callable or None
         Optional logging function (e.g., tqdm.write).
+    fit_tolerance : float or None
+        Convergence tolerance (ftol and xtol) for Lorentzian fitting.
+        None uses fit_lorentzians default (1e-8). Only used if auto_analyze=True.
+    max_iters : int or None
+        Maximum function evaluations for Lorentzian fitting.
+        None uses fit_lorentzians default (20000). Only used if auto_analyze=True.
 
     Returns
     -------
@@ -221,7 +229,9 @@ def run_odmr_sweep(
             show_plot=True,
             save_fig=save_fig,
             subfolder=subfolder,
-            title_prefix=f"ODMR Analysis ({num_sweeps} sweeps)"
+            title_prefix=f"ODMR Analysis ({num_sweeps} sweeps)",
+            fit_tolerance=fit_tolerance,
+            max_iters=max_iters
         )
         result['analysis'] = analysis_result['analysis']
         result['peak_params'] = analysis_result['peak_params']
@@ -337,18 +347,49 @@ def run_hardware_sweep(freqlist, ref_freq, settings, handles, odmr_data_cube, pb
 def measure_odmr_point(sg384, camera, freq, ref_freq, settling_time, n_frames, odmr_data_cube, idx):
     """
     Performs a single Signal/Reference measurement and updates the data cube.
-    This logic is extracted from the main sweep loop for reusability.
+
+    On the first call the camera is switched to ``GrabStrategy_LatestImageOnly``
+    continuous grabbing (subsequent calls are no-ops).  In this mode no explicit
+    ``flush_buffer()`` is required: since the transport layer keeps only one buffer
+    slot, any frame from the previous frequency is overwritten within one frame
+    period — well before the settling sleep completes.  This eliminates the
+    per-step ``StopGrabbing``/``StartGrabbing`` overhead (~500 ms each on USB).
+
+    Parameters
+    ----------
+    sg384 : SG384Controller
+        Signal generator instance.
+    camera : basler
+        Camera instance (must be open and connected).
+    freq : float
+        Signal frequency in GHz.
+    ref_freq : float
+        Reference frequency in GHz.
+    settling_time : float
+        Time to wait after each frequency change (seconds).  Must be longer
+        than one camera frame period so that the LatestImageOnly buffer
+        is guaranteed to hold a post-settling frame.
+    n_frames : int
+        Number of frames to average per measurement.
+    odmr_data_cube : np.ndarray
+        3-D accumulation array of shape (n_freqs, ny, nx); updated in-place.
+    idx : int
+        Frequency step index into odmr_data_cube.
     """
+    # Ensure camera is in continuous LatestImageOnly grab mode.
+    # Idempotent — only performs StopGrabbing/StartGrabbing once per session.
+    camera.start_continuous_grab()
+
     # 1. Measure Signal at target frequency
     sg384.set_frequency(freq, 'GHz')
     time.sleep(settling_time)
-    camera.flush_buffer()  # discard frames grabbed at previous frequency during any delay
+    # LatestImageOnly buffer now holds a frame from the new frequency;
+    # no explicit flush_buffer() needed.
     sig = camera.grab_frames(n_frames=n_frames, quiet=True)
 
     # 2. Measure Reference at background frequency
     sg384.set_frequency(ref_freq, 'GHz')
     time.sleep(settling_time)
-    camera.flush_buffer()  # discard frames grabbed at signal frequency during settling
     ref = camera.grab_frames(n_frames=n_frames, quiet=True)
 
     # 3. Normalize and accumulate
@@ -446,11 +487,14 @@ def measure_multi_point(sg384, camera, freq_list, slope_list, parity_list, settl
     # =========================================================================
     # STEP 1: Take PL measurements at all frequencies
     # =========================================================================
+    # Ensure camera is in continuous LatestImageOnly grab mode (idempotent).
+    camera.start_continuous_grab()
     measurements = []
     for freq in freq_list:
         sg384.set_frequency(freq, 'GHz')
         time.sleep(settling_time)
-        camera.flush_buffer()
+        # LatestImageOnly buffer is overwritten within one frame period;
+        # no explicit flush_buffer() needed.
         frame = camera.grab_frames(n_frames=n_frames, quiet=True)
         # Convert to float32 to avoid overflow during arithmetic
         measurements.append(frame.astype(np.float32))
@@ -527,7 +571,9 @@ def identify_multi_transition_inflection_points(
     save_fig=False,
     save_path=None,
     subfolder="",
-    logger=None
+    logger=None,
+    fit_tolerance=None,
+    max_iters=None
 ):
     """
     Identify all inflection points from both NV transitions for multi-point magnetometry.
@@ -569,6 +615,12 @@ def identify_multi_transition_inflection_points(
         Subfolder for saving data and figures.
     logger : callable or None
         Optional logging function.
+    fit_tolerance : float or None
+        Convergence tolerance (ftol and xtol) for Lorentzian fitting.
+        None uses fit_lorentzians default (1e-8).
+    max_iters : int or None
+        Maximum function evaluations for Lorentzian fitting.
+        None uses fit_lorentzians default (20000).
 
     Returns
     -------
@@ -611,7 +663,9 @@ def identify_multi_transition_inflection_points(
         save_fig=save_fig,
         save_path=save_path,
         subfolder=subfolder,
-        logger=logger
+        logger=logger,
+        fit_tolerance=fit_tolerance,
+        max_iters=max_iters
     )
 
     if show_plot and 'analysis_figure' in sweep1_result:
@@ -634,7 +688,9 @@ def identify_multi_transition_inflection_points(
         save_fig=save_fig,
         save_path=save_path,
         subfolder=subfolder,
-        logger=logger
+        logger=logger,
+        fit_tolerance=fit_tolerance,
+        max_iters=max_iters
     )
 
     if show_plot and 'analysis_figure' in sweep2_result:
@@ -1161,7 +1217,7 @@ def identify_multi_transition_inflection_points_binned(
     start_freq1, end_freq1, num_steps1,
     start_freq2, end_freq2, num_steps2,
     ref_freq, num_sweeps, settings,
-    bin_x, bin_y,
+    bin_x=None, bin_y=None,
     simulation_mode=False,
     n_lorentz_per_sweep=2,
     show_plot=True,
@@ -1212,9 +1268,14 @@ def identify_multi_transition_inflection_points_binned(
         Number of sweeps to average per range. Recommend ≥10 for good per-bin SNR.
     settings : dict
         Nested settings dictionary (camera, srs, simulation configs).
-    bin_x, bin_y : int
-        Spatial binning (pixels per bin). Required parameters.
-        Example: bin_x=10, bin_y=10 → 10×10 pixel bins.
+    bin_x, bin_y : int or None
+        Spatial binning (pixels per bin). Default None = global-mean mode.
+        When None, the full camera FOV is treated as a single bin and parameters
+        are read directly from the global mean ODMR fit (same code path as
+        identify_multi_transition_inflection_points). This gives results that are
+        functionally identical to the non-binned pipeline. Returns shape (8, 1, 1)
+        parameter arrays, compatible with all downstream binned functions.
+        Example: bin_x=50, bin_y=50 → 50×50 pixel bins.
     simulation_mode : bool
         If True, generate synthetic data.
     n_lorentz_per_sweep : int
@@ -1286,10 +1347,15 @@ def identify_multi_transition_inflection_points_binned(
     if logger is None:
         logger = print
 
+    global_mode = (bin_x is None or bin_y is None)
+
     logger("\n" + "="*60)
     logger("SPATIALLY-BINNED MULTI-TRANSITION INFLECTION POINT IDENTIFICATION")
     logger("="*60)
-    logger(f"Binning: {bin_x}×{bin_y} pixels per bin")
+    if global_mode:
+        logger("Mode: GLOBAL-MEAN (bin_x=None / bin_y=None) — parameters from global fit")
+    else:
+        logger(f"Binning: {bin_x}×{bin_y} pixels per bin")
     logger(f"Parallel fitting with n_jobs={n_jobs}")
 
     # Generate frequency arrays
@@ -1312,7 +1378,9 @@ def identify_multi_transition_inflection_points_binned(
         save_fig=save_fig,
         save_path=save_path,
         subfolder=subfolder,
-        logger=logger
+        logger=logger,
+        fit_tolerance=fit_tolerance,
+        max_iters=max_iters
     )
 
     if show_plot and 'analysis_figure' in sweep1_result:
@@ -1334,153 +1402,200 @@ def identify_multi_transition_inflection_points_binned(
         save_fig=save_fig,
         save_path=save_path,
         subfolder=subfolder,
-        logger=logger
+        logger=logger,
+        fit_tolerance=fit_tolerance,
+        max_iters=max_iters
     )
 
     if show_plot and 'analysis_figure' in sweep2_result:
         plt.show()
 
     # =========================================================================
-    # SPATIAL BINNING AND PER-BIN FITTING
+    # PARAMETER EXTRACTION: GLOBAL-MEAN MODE OR PER-BIN FITTING
     # =========================================================================
-    logger("\n" + "="*60)
-    logger("PERFORMING PER-BIN ODMR FITTING")
-    logger("="*60)
-
-    # Bin the data cubes
-    odmr_cube_1 = sweep1_result['odmr_data_cube']
-    odmr_cube_2 = sweep2_result['odmr_data_cube']
-
-    binned_cube_1 = bin_qdm_cube(odmr_cube_1, bin_x, bin_y)
-    binned_cube_2 = bin_qdm_cube(odmr_cube_2, bin_x, bin_y)
-
-    n_freq1, ny_bins, nx_bins = binned_cube_1.shape
-    n_freq2 = binned_cube_2.shape[0]
-
-    logger(f"Binned data shape: ({ny_bins}, {nx_bins}) bins")
-    logger(f"Total bins to fit: {ny_bins * nx_bins * 2} ({ny_bins * nx_bins} per sweep)")
-
-    # Setup frequency ranges for fitting
-    scan_width_1 = freqlist1.max() - freqlist1.min()
-    margin_1 = max(0.05 * scan_width_1, 0.001)
-    freq_range_1 = (freqlist1.min() + margin_1, freqlist1.max() - margin_1)
-
-    scan_width_2 = freqlist2.max() - freqlist2.min()
-    margin_2 = max(0.05 * scan_width_2, 0.001)
-    freq_range_2 = (freqlist2.min() + margin_2, freqlist2.max() - margin_2)
-
-    # Prepare bin spectra for parallel fitting
-    def prepare_bin_data(binned_cube, freqlist, freq_range):
-        """Extract all bin spectra and prepare for parallel fitting"""
-        bin_spectra = []
-        bin_coords = []
-        for iy in range(ny_bins):
-            for ix in range(nx_bins):
-                bin_spectra.append(binned_cube[:, iy, ix])
-                bin_coords.append((iy, ix))
-        return bin_spectra, bin_coords
-
-    # Fit all bins for sweep 1
-    logger(f"Fitting sweep 1 bins...")
-    bin_spectra_1, bin_coords_1 = prepare_bin_data(binned_cube_1, freqlist1, freq_range_1)
-
-    fit_results_1 = Parallel(n_jobs=n_jobs, verbose=5)(
-        delayed(_fit_single_bin_odmr)(
-            spectrum, freqlist1, n_lorentz_per_sweep, fit_tolerance, max_iters, freq_range_1
-        )
-        for spectrum in bin_spectra_1
-    )
-
-    # Fit all bins for sweep 2
-    logger(f"Fitting sweep 2 bins...")
-    bin_spectra_2, bin_coords_2 = prepare_bin_data(binned_cube_2, freqlist2, freq_range_2)
-
-    fit_results_2 = Parallel(n_jobs=n_jobs, verbose=5)(
-        delayed(_fit_single_bin_odmr)(
-            spectrum, freqlist2, n_lorentz_per_sweep, fit_tolerance, max_iters, freq_range_2
-        )
-        for spectrum in bin_spectra_2
-    )
-
-    # =========================================================================
-    # ASSEMBLE 3D PARAMETER ARRAYS
-    # =========================================================================
-    logger("\nAssembling 3D parameter arrays...")
 
     # Number of inflection points per sweep (2 per peak × n_lorentz_per_sweep)
     n_infl_per_sweep = 2 * n_lorentz_per_sweep
     n_infl_total = 2 * n_infl_per_sweep  # Total from both sweeps
 
-    # Allocate 3D arrays
-    inflection_points_3d = np.full((n_infl_total, ny_bins, nx_bins), np.nan, dtype=np.float32)
-    inflection_slopes_3d = np.full((n_infl_total, ny_bins, nx_bins), np.nan, dtype=np.float32)
-    inflection_contrasts_3d = np.full((n_infl_total, ny_bins, nx_bins), np.nan, dtype=np.float32)
+    if global_mode:
+        # ------------------------------------------------------------------
+        # GLOBAL-MEAN MODE: bypass per-bin fitting entirely.
+        # Read parameters directly from fit_global_odmr results already
+        # computed inside run_odmr_sweep (auto_analyze=True).
+        # Returns shape (n_infl_total, 1, 1) — compatible with all downstream
+        # binned functions; _upsample_parameter_array produces a uniform map.
+        # ------------------------------------------------------------------
+        logger("\n" + "="*60)
+        logger("GLOBAL-MEAN MODE — reading parameters from global ODMR fit")
+        logger("="*60)
 
-    fit_quality_map_1 = np.full((ny_bins, nx_bins), np.nan, dtype=np.float32)
-    fit_quality_map_2 = np.full((ny_bins, nx_bins), np.nan, dtype=np.float32)
+        ny_bins, nx_bins = 1, 1
 
-    # Get global mean parameters as fallback for failed bins
-    global_peak_params_1 = sweep1_result.get('peak_params', [])
-    global_peak_params_2 = sweep2_result.get('peak_params', [])
+        global_peak_params_1 = sweep1_result.get('peak_params', [])
+        global_peak_params_2 = sweep2_result.get('peak_params', [])
 
-    global_infl_pts_1 = []
-    global_infl_slopes_1 = []
-    global_infl_contrasts_1 = []
-    for peak in global_peak_params_1:
-        global_infl_pts_1.extend(peak['inflection_pts'])
-        global_infl_contrasts_1.extend(peak['inflection_contrasts'])
-        global_infl_slopes_1.append(-peak['max_slope'])
-        global_infl_slopes_1.append(peak['max_slope'])
+        global_infl_pts_1, global_infl_slopes_1, global_infl_contrasts_1 = [], [], []
+        for peak in global_peak_params_1:
+            global_infl_pts_1.extend(peak['inflection_pts'])
+            global_infl_contrasts_1.extend(peak['inflection_contrasts'])
+            global_infl_slopes_1.append(-peak['max_slope'])
+            global_infl_slopes_1.append(peak['max_slope'])
 
-    global_infl_pts_2 = []
-    global_infl_slopes_2 = []
-    global_infl_contrasts_2 = []
-    for peak in global_peak_params_2:
-        global_infl_pts_2.extend(peak['inflection_pts'])
-        global_infl_contrasts_2.extend(peak['inflection_contrasts'])
-        global_infl_slopes_2.append(-peak['max_slope'])
-        global_infl_slopes_2.append(peak['max_slope'])
+        global_infl_pts_2, global_infl_slopes_2, global_infl_contrasts_2 = [], [], []
+        for peak in global_peak_params_2:
+            global_infl_pts_2.extend(peak['inflection_pts'])
+            global_infl_contrasts_2.extend(peak['inflection_contrasts'])
+            global_infl_slopes_2.append(-peak['max_slope'])
+            global_infl_slopes_2.append(peak['max_slope'])
 
-    # Fill arrays from sweep 1
-    failed_bins_1 = 0
-    for idx, ((iy, ix), fit_result) in enumerate(zip(bin_coords_1, fit_results_1)):
-        if fit_result is not None:
-            inflection_points_3d[:n_infl_per_sweep, iy, ix] = fit_result['inflection_points']
-            inflection_slopes_3d[:n_infl_per_sweep, iy, ix] = fit_result['inflection_slopes']
-            inflection_contrasts_3d[:n_infl_per_sweep, iy, ix] = fit_result['inflection_contrasts']
-            fit_quality_map_1[iy, ix] = fit_result['r2']
+        inflection_points_3d = np.full((n_infl_total, 1, 1), np.nan, dtype=np.float32)
+        inflection_slopes_3d = np.full((n_infl_total, 1, 1), np.nan, dtype=np.float32)
+        inflection_contrasts_3d = np.full((n_infl_total, 1, 1), np.nan, dtype=np.float32)
+        fit_quality_map_1 = np.ones((1, 1), dtype=np.float32)
+        fit_quality_map_2 = np.ones((1, 1), dtype=np.float32)
+
+        if len(global_infl_pts_1) == n_infl_per_sweep:
+            inflection_points_3d[:n_infl_per_sweep, 0, 0] = global_infl_pts_1
+            inflection_slopes_3d[:n_infl_per_sweep, 0, 0] = global_infl_slopes_1
+            inflection_contrasts_3d[:n_infl_per_sweep, 0, 0] = global_infl_contrasts_1
         else:
-            # Use global mean as fallback
-            if len(global_infl_pts_1) == n_infl_per_sweep:
-                inflection_points_3d[:n_infl_per_sweep, iy, ix] = global_infl_pts_1
-                inflection_slopes_3d[:n_infl_per_sweep, iy, ix] = global_infl_slopes_1
-                inflection_contrasts_3d[:n_infl_per_sweep, iy, ix] = global_infl_contrasts_1
-            failed_bins_1 += 1
+            logger("  WARNING: sweep 1 peak_params has unexpected length — NaN values retained")
 
-    # Fill arrays from sweep 2
-    failed_bins_2 = 0
-    for idx, ((iy, ix), fit_result) in enumerate(zip(bin_coords_2, fit_results_2)):
-        if fit_result is not None:
-            inflection_points_3d[n_infl_per_sweep:, iy, ix] = fit_result['inflection_points']
-            inflection_slopes_3d[n_infl_per_sweep:, iy, ix] = fit_result['inflection_slopes']
-            inflection_contrasts_3d[n_infl_per_sweep:, iy, ix] = fit_result['inflection_contrasts']
-            fit_quality_map_2[iy, ix] = fit_result['r2']
+        if len(global_infl_pts_2) == n_infl_per_sweep:
+            inflection_points_3d[n_infl_per_sweep:, 0, 0] = global_infl_pts_2
+            inflection_slopes_3d[n_infl_per_sweep:, 0, 0] = global_infl_slopes_2
+            inflection_contrasts_3d[n_infl_per_sweep:, 0, 0] = global_infl_contrasts_2
         else:
-            # Use global mean as fallback
-            if len(global_infl_pts_2) == n_infl_per_sweep:
-                inflection_points_3d[n_infl_per_sweep:, iy, ix] = global_infl_pts_2
-                inflection_slopes_3d[n_infl_per_sweep:, iy, ix] = global_infl_slopes_2
-                inflection_contrasts_3d[n_infl_per_sweep:, iy, ix] = global_infl_contrasts_2
-            failed_bins_2 += 1
+            logger("  WARNING: sweep 2 peak_params has unexpected length — NaN values retained")
 
-    total_bins = ny_bins * nx_bins
-    logger(f"\nFit quality:")
-    logger(f"  Sweep 1: {total_bins - failed_bins_1}/{total_bins} bins successful "
-           f"({100*(total_bins - failed_bins_1)/total_bins:.1f}%)")
-    logger(f"  Sweep 2: {total_bins - failed_bins_2}/{total_bins} bins successful "
-           f"({100*(total_bins - failed_bins_2)/total_bins:.1f}%)")
-    if failed_bins_1 > 0 or failed_bins_2 > 0:
-        logger(f"  Failed bins replaced with global mean parameters")
+        logger(f"  Output shape: {inflection_points_3d.shape} (1×1 bin = global mean)")
+
+    else:
+        # ------------------------------------------------------------------
+        # BINNED MODE: spatially bin each ODMR cube, fit all bins in parallel.
+        # ------------------------------------------------------------------
+        logger("\n" + "="*60)
+        logger("PERFORMING PER-BIN ODMR FITTING")
+        logger("="*60)
+
+        odmr_cube_1 = sweep1_result['odmr_data_cube']
+        odmr_cube_2 = sweep2_result['odmr_data_cube']
+
+        binned_cube_1 = bin_qdm_cube(odmr_cube_1, bin_x, bin_y)
+        binned_cube_2 = bin_qdm_cube(odmr_cube_2, bin_x, bin_y)
+
+        n_freq1, ny_bins, nx_bins = binned_cube_1.shape
+
+        logger(f"Binned data shape: ({ny_bins}, {nx_bins}) bins")
+        logger(f"Total bins to fit: {ny_bins * nx_bins * 2} ({ny_bins * nx_bins} per sweep)")
+
+        # Setup frequency ranges for fitting
+        scan_width_1 = freqlist1.max() - freqlist1.min()
+        margin_1 = max(0.05 * scan_width_1, 0.001)
+        freq_range_1 = (freqlist1.min() + margin_1, freqlist1.max() - margin_1)
+
+        scan_width_2 = freqlist2.max() - freqlist2.min()
+        margin_2 = max(0.05 * scan_width_2, 0.001)
+        freq_range_2 = (freqlist2.min() + margin_2, freqlist2.max() - margin_2)
+
+        def prepare_bin_data(binned_cube):
+            """Extract all bin spectra and coordinates for parallel fitting."""
+            bin_spectra = []
+            bin_coords = []
+            for iy in range(ny_bins):
+                for ix in range(nx_bins):
+                    bin_spectra.append(binned_cube[:, iy, ix])
+                    bin_coords.append((iy, ix))
+            return bin_spectra, bin_coords
+
+        # Fit all bins for sweep 1
+        logger(f"Fitting sweep 1 bins...")
+        bin_spectra_1, bin_coords_1 = prepare_bin_data(binned_cube_1)
+
+        fit_results_1 = Parallel(n_jobs=n_jobs, verbose=5)(
+            delayed(_fit_single_bin_odmr)(
+                spectrum, freqlist1, n_lorentz_per_sweep, fit_tolerance, max_iters, freq_range_1
+            )
+            for spectrum in bin_spectra_1
+        )
+
+        # Fit all bins for sweep 2
+        logger(f"Fitting sweep 2 bins...")
+        bin_spectra_2, bin_coords_2 = prepare_bin_data(binned_cube_2)
+
+        fit_results_2 = Parallel(n_jobs=n_jobs, verbose=5)(
+            delayed(_fit_single_bin_odmr)(
+                spectrum, freqlist2, n_lorentz_per_sweep, fit_tolerance, max_iters, freq_range_2
+            )
+            for spectrum in bin_spectra_2
+        )
+
+        # Allocate 3D arrays
+        logger("\nAssembling 3D parameter arrays...")
+        inflection_points_3d = np.full((n_infl_total, ny_bins, nx_bins), np.nan, dtype=np.float32)
+        inflection_slopes_3d = np.full((n_infl_total, ny_bins, nx_bins), np.nan, dtype=np.float32)
+        inflection_contrasts_3d = np.full((n_infl_total, ny_bins, nx_bins), np.nan, dtype=np.float32)
+
+        fit_quality_map_1 = np.full((ny_bins, nx_bins), np.nan, dtype=np.float32)
+        fit_quality_map_2 = np.full((ny_bins, nx_bins), np.nan, dtype=np.float32)
+
+        # Get global mean parameters as fallback for failed bins
+        global_peak_params_1 = sweep1_result.get('peak_params', [])
+        global_peak_params_2 = sweep2_result.get('peak_params', [])
+
+        global_infl_pts_1, global_infl_slopes_1, global_infl_contrasts_1 = [], [], []
+        for peak in global_peak_params_1:
+            global_infl_pts_1.extend(peak['inflection_pts'])
+            global_infl_contrasts_1.extend(peak['inflection_contrasts'])
+            global_infl_slopes_1.append(-peak['max_slope'])
+            global_infl_slopes_1.append(peak['max_slope'])
+
+        global_infl_pts_2, global_infl_slopes_2, global_infl_contrasts_2 = [], [], []
+        for peak in global_peak_params_2:
+            global_infl_pts_2.extend(peak['inflection_pts'])
+            global_infl_contrasts_2.extend(peak['inflection_contrasts'])
+            global_infl_slopes_2.append(-peak['max_slope'])
+            global_infl_slopes_2.append(peak['max_slope'])
+
+        # Fill arrays from sweep 1
+        failed_bins_1 = 0
+        for idx, ((iy, ix), fit_result) in enumerate(zip(bin_coords_1, fit_results_1)):
+            if fit_result is not None:
+                inflection_points_3d[:n_infl_per_sweep, iy, ix] = fit_result['inflection_points']
+                inflection_slopes_3d[:n_infl_per_sweep, iy, ix] = fit_result['inflection_slopes']
+                inflection_contrasts_3d[:n_infl_per_sweep, iy, ix] = fit_result['inflection_contrasts']
+                fit_quality_map_1[iy, ix] = fit_result['r2']
+            else:
+                if len(global_infl_pts_1) == n_infl_per_sweep:
+                    inflection_points_3d[:n_infl_per_sweep, iy, ix] = global_infl_pts_1
+                    inflection_slopes_3d[:n_infl_per_sweep, iy, ix] = global_infl_slopes_1
+                    inflection_contrasts_3d[:n_infl_per_sweep, iy, ix] = global_infl_contrasts_1
+                failed_bins_1 += 1
+
+        # Fill arrays from sweep 2
+        failed_bins_2 = 0
+        for idx, ((iy, ix), fit_result) in enumerate(zip(bin_coords_2, fit_results_2)):
+            if fit_result is not None:
+                inflection_points_3d[n_infl_per_sweep:, iy, ix] = fit_result['inflection_points']
+                inflection_slopes_3d[n_infl_per_sweep:, iy, ix] = fit_result['inflection_slopes']
+                inflection_contrasts_3d[n_infl_per_sweep:, iy, ix] = fit_result['inflection_contrasts']
+                fit_quality_map_2[iy, ix] = fit_result['r2']
+            else:
+                if len(global_infl_pts_2) == n_infl_per_sweep:
+                    inflection_points_3d[n_infl_per_sweep:, iy, ix] = global_infl_pts_2
+                    inflection_slopes_3d[n_infl_per_sweep:, iy, ix] = global_infl_slopes_2
+                    inflection_contrasts_3d[n_infl_per_sweep:, iy, ix] = global_infl_contrasts_2
+                failed_bins_2 += 1
+
+        total_bins = ny_bins * nx_bins
+        logger(f"\nFit quality:")
+        logger(f"  Sweep 1: {total_bins - failed_bins_1}/{total_bins} bins successful "
+               f"({100*(total_bins - failed_bins_1)/total_bins:.1f}%)")
+        logger(f"  Sweep 2: {total_bins - failed_bins_2}/{total_bins} bins successful "
+               f"({100*(total_bins - failed_bins_2)/total_bins:.1f}%)")
+        if failed_bins_1 > 0 or failed_bins_2 > 0:
+            logger(f"  Failed bins replaced with global mean parameters")
 
     # =========================================================================
     # OPTIONAL: VISUALIZE SPATIAL PARAMETER MAPS
@@ -1952,6 +2067,8 @@ def measure_multi_point_binned(sg384, camera, freq_array, slope_array, parity_li
     bin_h = ny_full // ny_bins
     bin_w = nx_full // nx_bins
 
+    # Ensure continuous LatestImageOnly grabbing (idempotent after first call).
+    camera.start_continuous_grab()
     measurements = []
     for i in range(n_points):
         if parity_list[i] == 0:
@@ -1959,7 +2076,7 @@ def measure_multi_point_binned(sg384, camera, freq_array, slope_array, parity_li
             freq_scalar = np.nanmedian(freq_array[i])
             sg384.set_frequency(freq_scalar, 'GHz')
             time.sleep(settling_time)
-            camera.flush_buffer()
+            # LatestImageOnly buffer is overwritten within one frame period; no flush needed.
             frame = camera.grab_frames(n_frames=n_frames, quiet=True)
             measurements.append(frame.astype(np.float32))
         else:
@@ -1977,7 +2094,6 @@ def measure_multi_point_binned(sg384, camera, freq_array, slope_array, parity_li
                         )
                     sg384.set_frequency(freq_scalar, 'GHz')
                     time.sleep(settling_time)
-                    camera.flush_buffer()
                     frame = camera.grab_frames(n_frames=n_frames, quiet=True).astype(np.float32)
                     # Pixel boundaries; last bin extends to full edge to cover any remainder
                     y0 = iy * bin_h
@@ -3498,7 +3614,9 @@ def analyze_and_plot_odmr(
     save_fig=False,
     save_path=None,
     subfolder="",
-    title_prefix="ODMR Analysis"
+    title_prefix="ODMR Analysis",
+    fit_tolerance=None,
+    max_iters=None
 ):
     """
     High-level function to analyze and plot spatially-averaged ODMR data.
@@ -3528,6 +3646,12 @@ def analyze_and_plot_odmr(
         Subfolder within save_path.
     title_prefix : str
         Prefix for plot title.
+    fit_tolerance : float or None
+        Convergence tolerance (ftol and xtol) for scipy least_squares.
+        None uses fit_lorentzians default (1e-8).
+    max_iters : int or None
+        Maximum function evaluations for scipy least_squares.
+        None uses fit_lorentzians default (20000).
 
     Returns
     -------
@@ -3547,7 +3671,8 @@ def analyze_and_plot_odmr(
     subset_cube = get_cube_subset(odmr_data_cube, x_roi, y_roi)
 
     # 2. Perform fitting
-    analysis = fit_global_odmr(subset_cube, freqlist, n_lorentz=n_lorentz)
+    analysis = fit_global_odmr(subset_cube, freqlist, n_lorentz=n_lorentz,
+                               fit_tolerance=fit_tolerance, max_iters=max_iters)
     peak_params = analysis['peak_params']
     baseline = analysis['popt'][0]
     r2 = analysis['r2']
@@ -3633,10 +3758,24 @@ def analyze_and_plot_odmr(
     }
 
 
-def fit_global_odmr(odmr_data_cube, freqlist, n_lorentz=2):
+def fit_global_odmr(odmr_data_cube, freqlist, n_lorentz=2, fit_tolerance=None, max_iters=None):
     """
     Spatially averages a 3D ODMR cube and fits it to N Lorentzians.
-    Updated to include analytic max slope and linear region frequencies.
+
+    Parameters
+    ----------
+    odmr_data_cube : np.ndarray
+        3D array of shape (n_freqs, ny, nx).
+    freqlist : np.ndarray
+        Frequency values in GHz.
+    n_lorentz : int
+        Number of Lorentzian peaks to fit.
+    fit_tolerance : float or None
+        Convergence tolerance (ftol and xtol) passed to scipy least_squares.
+        None uses fit_lorentzians default (1e-8).
+    max_iters : int or None
+        Maximum function evaluations passed to scipy least_squares.
+        None uses fit_lorentzians default (20000).
     """
     # 1. Data Preparation: Spatial Average
     y_data = np.nanmean(odmr_data_cube, axis=(1, 2))
@@ -3648,11 +3787,18 @@ def fit_global_odmr(odmr_data_cube, freqlist, n_lorentz=2):
     resonance_window = (x_data.min() + margin, x_data.max() - margin)
 
     # 2. Perform the Fit
+    tol_kwargs = {}
+    if fit_tolerance is not None:
+        tol_kwargs['ftol'] = fit_tolerance
+        tol_kwargs['xtol'] = fit_tolerance
+    if max_iters is not None:
+        tol_kwargs['max_nfev'] = max_iters
     fit_results = fit_lorentzians(
-        x_data, 
-        y_data, 
-        n_lorentz=n_lorentz, 
-        freq_range=resonance_window
+        x_data,
+        y_data,
+        n_lorentz=n_lorentz,
+        freq_range=resonance_window,
+        **tol_kwargs
     )
     
     popt = fit_results['popt']
@@ -4471,6 +4617,10 @@ def analyze_background_subtraction(
     show_plot=True,
     save_fig=False,
     save_data=False,
+    vrange_raw=None,
+    vrange_denoised=None,
+    vrange_processed=None,
+    vrange_subtracted=None,
 ):
     """
     Load two multi-point field map .npz files (background and sample), apply
@@ -4499,6 +4649,19 @@ def analyze_background_subtraction(
         Save both figures as .png files (default False).
     save_data : bool
         Save result arrays as a .npz file (default False).
+    vrange_raw : tuple of (vmin, vmax) or None
+        Explicit color limits (Gauss) for the 'Raw' column in the analysis figure.
+        If None, auto-computed as symmetric 99.5th percentile (default).
+    vrange_denoised : tuple of (vmin, vmax) or None
+        Explicit color limits (Gauss) for the 'Denoised' column in the analysis
+        figure. If None, auto-computed (default).
+    vrange_processed : tuple of (vmin, vmax) or None
+        Explicit color limits (Gauss) for the 'Processed (Raw - Denoised)' column
+        in the analysis figure and the background/sample panels in the comparison
+        figure. If None, auto-computed (default).
+    vrange_subtracted : tuple of (vmin, vmax) or None
+        Explicit color limits (Gauss) for the 'Background-Subtracted' panel in the
+        comparison figure. If None, auto-computed (default).
 
     Returns
     -------
@@ -4506,6 +4669,9 @@ def analyze_background_subtraction(
         'bg_raw', 'bg_denoised', 'bg_processed'      : background field maps (Gauss)
         'sample_raw', 'sample_denoised', 'sample_processed' : sample field maps (Gauss)
         'subtracted'     : background-subtracted result = sample_processed - bg_processed
+        'gaussian_sigma' : float, sigma used for Gaussian denoising
+        'bg_file'        : str, path to the background .npz file
+        'sample_file'    : str, path to the sample .npz file
         'figure_analysis': Figure, 2x3 panel showing raw/denoised/processed for each
         'figure_comparison': Figure, 1x3 showing bg_processed, sample_processed, subtracted
     """
@@ -4546,9 +4712,9 @@ def analyze_background_subtraction(
         fontsize=10, fontweight='bold'
     )
 
-    vmin_raw, vmax_raw = _sym_clim([bg_raw, sample_raw])
-    vmin_den, vmax_den = _sym_clim([bg_denoised, sample_denoised])
-    vmin_proc, vmax_proc = _sym_clim([bg_processed, sample_processed])
+    vmin_raw, vmax_raw = vrange_raw if vrange_raw is not None else _sym_clim([bg_raw, sample_raw])
+    vmin_den, vmax_den = vrange_denoised if vrange_denoised is not None else _sym_clim([bg_denoised, sample_denoised])
+    vmin_proc, vmax_proc = vrange_processed if vrange_processed is not None else _sym_clim([bg_processed, sample_processed])
 
     rows = [
         ('Background', bg_raw, bg_denoised, bg_processed),
@@ -4581,8 +4747,8 @@ def analyze_background_subtraction(
         fontsize=10, fontweight='bold'
     )
 
-    vmin_proc_all, vmax_proc_all = _sym_clim([bg_processed, sample_processed])
-    vmin_sub, vmax_sub = _sym_clim([subtracted])
+    vmin_proc_all, vmax_proc_all = vrange_processed if vrange_processed is not None else _sym_clim([bg_processed, sample_processed])
+    vmin_sub, vmax_sub = vrange_subtracted if vrange_subtracted is not None else _sym_clim([subtracted])
 
     panels = [
         (axes2[0], bg_processed,     vmin_proc_all, vmax_proc_all, 'Background\n(Processed: Raw - Denoised)'),
@@ -4646,9 +4812,267 @@ def analyze_background_subtraction(
         'sample_denoised': sample_denoised,
         'sample_processed': sample_processed,
         'subtracted': subtracted,
+        'gaussian_sigma': gaussian_sigma,
+        'bg_file': str(bg_file),
+        'sample_file': str(sample_file),
         'figure_analysis': fig1,
         'figure_comparison': fig2,
     }
+
+
+def replot_background_subtraction(
+    result,
+    gaussian_sigma=None,
+    source_label=None,
+    vrange_raw=None,
+    vrange_denoised=None,
+    vrange_processed=None,
+    vrange_subtracted=None,
+    show_plot=True,
+    save_fig=False,
+    save_path=None,
+    subfolder="",
+):
+    """
+    Replot the output of analyze_background_subtraction with custom color limits.
+
+    Takes the result dict from analyze_background_subtraction and regenerates
+    both figures without reloading files or recomputing denoising. Useful for
+    adjusting the display range to highlight specific features.
+
+    Parameters
+    ----------
+    result : dict
+        Output dict from analyze_background_subtraction.
+    gaussian_sigma : float or None
+        Sigma used for Gaussian denoising (for figure title). If None, reads
+        from result dict key 'gaussian_sigma' if present.
+    source_label : str or None
+        Label shown in figure titles. If None, reconstructed from result dict
+        keys 'bg_file' and 'sample_file' if present.
+    vrange_raw : tuple of (vmin, vmax) or None
+        Explicit color limits (Gauss) for the 'Raw' column. None = auto.
+    vrange_denoised : tuple of (vmin, vmax) or None
+        Explicit color limits (Gauss) for the 'Denoised' column. None = auto.
+    vrange_processed : tuple of (vmin, vmax) or None
+        Explicit color limits (Gauss) for the 'Processed' column (both analysis
+        figure and bg/sample panels in comparison figure). None = auto.
+    vrange_subtracted : tuple of (vmin, vmax) or None
+        Explicit color limits (Gauss) for the 'Background-Subtracted' panel.
+        None = auto.
+    show_plot : bool
+        Display figures inline (default True).
+    save_fig : bool
+        Save both figures as .png files (default False).
+    save_path : str or Path or None
+        Base directory for saving outputs.
+    subfolder : str
+        Subfolder within save_path.
+
+    Returns
+    -------
+    dict with keys:
+        'figure_analysis'  : Figure, 2x3 panel analysis figure
+        'figure_comparison': Figure, 1x3 comparison figure
+    """
+    bg_raw = result['bg_raw']
+    bg_denoised = result['bg_denoised']
+    bg_processed = result['bg_processed']
+    sample_raw = result['sample_raw']
+    sample_denoised = result['sample_denoised']
+    sample_processed = result['sample_processed']
+    subtracted = result['subtracted']
+
+    # Extract metadata from result dict if not provided explicitly
+    if gaussian_sigma is None:
+        gaussian_sigma = result.get('gaussian_sigma', None)
+    if source_label is None:
+        bg_f = result.get('bg_file', '')
+        sample_f = result.get('sample_file', '')
+        if bg_f or sample_f:
+            source_label = f'BG: {Path(bg_f).name}  |  Sample: {Path(sample_f).name}'
+        else:
+            source_label = ''
+
+    sigma_str = f'Gaussian sigma={gaussian_sigma} px' if gaussian_sigma is not None else ''
+
+    # Helper: symmetric color limits
+    def _sym_clim(arrays, pct=99.5):
+        vals = np.concatenate([a.ravel() for a in arrays])
+        vals = vals[np.isfinite(vals)]
+        vabs = np.nanpercentile(np.abs(vals), pct) if len(vals) > 0 else 1.0
+        return -vabs, vabs
+
+    # Resolve color limits
+    vmin_raw, vmax_raw = vrange_raw if vrange_raw is not None else _sym_clim([bg_raw, sample_raw])
+    vmin_den, vmax_den = vrange_denoised if vrange_denoised is not None else _sym_clim([bg_denoised, sample_denoised])
+    vmin_proc, vmax_proc = vrange_processed if vrange_processed is not None else _sym_clim([bg_processed, sample_processed])
+    vmin_proc_all, vmax_proc_all = vrange_processed if vrange_processed is not None else _sym_clim([bg_processed, sample_processed])
+    vmin_sub, vmax_sub = vrange_subtracted if vrange_subtracted is not None else _sym_clim([subtracted])
+
+    # Build title components
+    title_suffix = '  |  '.join(p for p in [sigma_str, source_label] if p)
+    title1 = f'Field Map Analysis  |  {title_suffix}' if title_suffix else 'Field Map Analysis'
+    title2 = f'Background Subtraction Result  |  {title_suffix}' if title_suffix else 'Background Subtraction Result'
+
+    # -------------------------------------------------------
+    # Figure 1: 2-row x 3-col analysis (raw / denoised / processed)
+    # -------------------------------------------------------
+    fig1, axes1 = plt.subplots(2, 3, figsize=(16, 9))
+    fig1.suptitle(title1, fontsize=10, fontweight='bold')
+
+    rows = [
+        ('Background', bg_raw, bg_denoised, bg_processed),
+        ('Sample',     sample_raw, sample_denoised, sample_processed),
+    ]
+    col_specs = [
+        ('Raw', vmin_raw, vmax_raw),
+        ('Denoised (Gaussian)', vmin_den, vmax_den),
+        ('Processed (Raw - Denoised)', vmin_proc, vmax_proc),
+    ]
+
+    for r, (row_label, raw, den, proc) in enumerate(rows):
+        axes1[r, 0].set_ylabel(row_label, fontsize=12, fontweight='bold')
+        imgs = [raw, den, proc]
+        for c, (col_title, vmin, vmax) in enumerate(col_specs):
+            ax = axes1[r, c]
+            im = ax.imshow(imgs[c], cmap='RdBu_r', vmin=vmin, vmax=vmax, origin='upper')
+            ax.set_title(col_title, fontsize=10)
+            ax.set_xlabel('Pixel X')
+            fig1.colorbar(im, ax=ax, fraction=0.046, label='B (Gauss)')
+
+    fig1.tight_layout(rect=[0, 0.03, 1, 1])
+
+    # -------------------------------------------------------
+    # Figure 2: 1x3 comparison (bg processed / sample processed / subtracted)
+    # -------------------------------------------------------
+    fig2, axes2 = plt.subplots(1, 3, figsize=(17, 5))
+    fig2.suptitle(title2, fontsize=10, fontweight='bold')
+
+    panels = [
+        (axes2[0], bg_processed,     vmin_proc_all, vmax_proc_all, 'Background\n(Processed: Raw - Denoised)'),
+        (axes2[1], sample_processed, vmin_proc_all, vmax_proc_all, 'Sample\n(Processed: Raw - Denoised)'),
+        (axes2[2], subtracted,       vmin_sub,      vmax_sub,      'Background-Subtracted\n(Sample - Background)'),
+    ]
+    for i, (ax, img, vmin, vmax, title) in enumerate(panels):
+        im = ax.imshow(img, cmap='RdBu_r', vmin=vmin, vmax=vmax, origin='upper')
+        ax.set_title(title, fontsize=11)
+        ax.set_xlabel('Pixel X')
+        if i == 0:
+            ax.set_ylabel('Pixel Y')
+        fig2.colorbar(im, ax=ax, fraction=0.046, label='B (Gauss)')
+
+    fig2.tight_layout(rect=[0, 0.04, 1, 1])
+
+    # --- Save ---
+    if save_fig and save_path is not None:
+        save_dir = Path(save_path) / subfolder
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for fig_obj, base in [
+            (fig1, f'background_subtraction_analysis_replot_{timestamp}.png'),
+            (fig2, f'background_subtracted_comparison_replot_{timestamp}.png'),
+        ]:
+            out_path = save_dir / base
+            fig_obj.savefig(out_path, dpi=300, bbox_inches='tight')
+            print(f'Saved figure: {out_path}')
+
+    if show_plot:
+        plt.show()
+
+    return {
+        'figure_analysis': fig1,
+        'figure_comparison': fig2,
+    }
+
+
+def plot_subtracted_field_map(
+    result,
+    vrange=None,
+    figsize=(7, 5),
+    title=None,
+    show_plot=True,
+    save_fig=False,
+    save_path=None,
+    subfolder="",
+):
+    """
+    Plot only the background-subtracted field map as a single-panel figure.
+
+    Takes the result dict from analyze_background_subtraction and plots just
+    the subtracted result (sample_processed - bg_processed). Allows explicit
+    control over the color range and figure size.
+
+    Parameters
+    ----------
+    result : dict
+        Output dict from analyze_background_subtraction (must contain key
+        'subtracted' and optionally 'bg_file', 'sample_file', 'gaussian_sigma').
+    vrange : tuple of (vmin, vmax) or None
+        Explicit color limits in Gauss. If None, auto-computed as symmetric
+        99.5th percentile (default).
+    figsize : tuple of (width, height)
+        Figure size in inches (default (7, 5)).
+    title : str or None
+        Figure title. If None, a default title is generated from the result
+        metadata (filenames, gaussian_sigma).
+    show_plot : bool
+        Display the figure inline (default True).
+    save_fig : bool
+        Save the figure as a .png file (default False).
+    save_path : str or Path or None
+        Base directory for saving output.
+    subfolder : str
+        Subfolder within save_path.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    subtracted = result['subtracted']
+
+    # Auto color limits
+    if vrange is not None:
+        vmin, vmax = vrange
+    else:
+        vals = subtracted[np.isfinite(subtracted)].ravel()
+        vabs = np.nanpercentile(np.abs(vals), 99.5) if len(vals) > 0 else 1.0
+        vmin, vmax = -vabs, vabs
+
+    # Build default title from metadata
+    if title is None:
+        sigma = result.get('gaussian_sigma', None)
+        bg_f = Path(result.get('bg_file', '')).name
+        sample_f = Path(result.get('sample_file', '')).name
+        parts = []
+        if sigma is not None:
+            parts.append(f'Gaussian sigma={sigma} px')
+        if bg_f or sample_f:
+            parts.append(f'BG: {bg_f}  |  Sample: {sample_f}')
+        title = 'Background-Subtracted Field Map'
+        if parts:
+            title += '\n' + '  |  '.join(parts)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    im = ax.imshow(subtracted, cmap='RdBu_r', vmin=vmin, vmax=vmax, origin='upper')
+    ax.set_title(title, fontsize=10)
+    ax.set_xlabel('Pixel X')
+    ax.set_ylabel('Pixel Y')
+    fig.colorbar(im, ax=ax, fraction=0.046, label='B (Gauss)')
+    fig.tight_layout()
+
+    if save_fig and save_path is not None:
+        save_dir = Path(save_path) / subfolder
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = save_dir / f'background_subtracted_single_{timestamp}.png'
+        fig.savefig(out_path, dpi=300, bbox_inches='tight')
+        print(f'Saved figure: {out_path}')
+
+    if show_plot:
+        plt.show()
+
+    return fig
 
 
 def fast_guess_p0(

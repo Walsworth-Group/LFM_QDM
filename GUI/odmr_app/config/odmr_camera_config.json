@@ -1,0 +1,20 @@
+{
+  "camera_serial_number": "25061217",
+  "camera_exposure_us": 100.0,
+  "camera_binning_x": 4,
+  "camera_binning_y": 4,
+  "camera_binning_mode": "Average",
+  "camera_pixel_format": "Mono12",
+  "camera_num_frames_to_average": 100,
+  "camera_live_display_enabled": true,
+  "camera_averaged_display_enabled": true,
+  "camera_live_averaging_enabled": true,
+  "camera_flip_horizontal": false,
+  "camera_flip_vertical": false,
+  "camera_save_dir": "E:\\MTB project\\CW ODMR",
+  "camera_save_subfolder": "camera_data",
+  "camera_save_filename_suffix": "",
+  "camera_save_append_timestamp": true,
+  "camera_save_format": "npy",
+  "camera_num_images_to_save": 10
+}

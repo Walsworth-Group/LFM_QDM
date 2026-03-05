@@ -76,9 +76,11 @@ class SG384Worker(QThread):
                 self.connection_failed.emit("sg384_controller not set in state")
                 return
             initial_freq = self._safe_get_frequency()
+            initial_amp = self._safe_get_amplitude()
             self.connected.emit({
                 "address": self.state.rf_address,
                 "freq_ghz": initial_freq or 0.0,
+                "amp_dbm": initial_amp,
             })
         except Exception as e:
             self.connection_failed.emit(str(e))
@@ -178,6 +180,28 @@ class SG384Worker(QThread):
             return self.state.sg384_controller.get_frequency()  # GHz assumed
         except Exception as e:
             self.error.emit(f"Frequency poll error: {e}")
+            return None
+        finally:
+            self.state.sg384_lock.release()
+
+    def _safe_get_amplitude(self):
+        """
+        Query the RF generator amplitude only if the lock is immediately available.
+
+        Returns the amplitude in dBm, or ``None`` if the lock is held or an
+        error occurs.
+
+        Returns
+        -------
+        float or None
+        """
+        acquired = self.state.sg384_lock.acquire(blocking=False)
+        if not acquired:
+            return None
+        try:
+            return self.state.sg384_controller.get_amplitude()
+        except Exception as e:
+            self.error.emit(f"Amplitude query error: {e}")
             return None
         finally:
             self.state.sg384_lock.release()

@@ -26,6 +26,17 @@
        </item>
        <item><widget class="QPushButton" name="rf_set_btn"><property name="text"><string>Set Freq</string></property></widget></item>
        <item><widget class="QLabel" name="rf_amp_label"><property name="text"><string>Amp: &#8212; dBm</string></property></widget></item>
+       <item>
+        <widget class="QDoubleSpinBox" name="rf_amp_spinbox">
+         <property name="decimals"><number>1</number></property>
+         <property name="minimum"><double>-47.0</double></property>
+         <property name="maximum"><double>16.5</double></property>
+         <property name="singleStep"><double>0.1</double></property>
+         <property name="value"><double>-10.0</double></property>
+         <property name="suffix"><string> dBm</string></property>
+        </widget>
+       </item>
+       <item><widget class="QPushButton" name="rf_set_amp_btn"><property name="text"><string>Set Amp</string></property></widget></item>
        <item><widget class="QPushButton" name="rf_connect_btn"><property name="text"><string>Connect RF</string></property></widget></item>
        <item>
         <spacer name="rf_spacer">

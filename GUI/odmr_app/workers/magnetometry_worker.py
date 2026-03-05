@@ -256,12 +256,28 @@ class MagnetometryWorker(QThread):
         inflection_slopes = result["inflection_slopes"]
         inflection_contrasts = result.get("inflection_contrasts", None)
 
+        indices = list(state.mag_selected_indices)
+        parities = list(state.mag_selected_parities)
+
+        # Normalize: interactive-mode reference rows have a non-zero row index
+        # but parity=0.  format_multi_point_frequencies requires index=0 for
+        # reference positions, so convert (parity=0, index≠0) → (0, 0).
+        indices = [0 if p == 0 else idx for idx, p in zip(indices, parities)]
+
+        # If no reference is present at all, append one at the end so that
+        # every signal has a following reference (required by measure_multi_point).
+        if 0 not in indices:
+            print("[MagnetometryWorker] No reference measurement in selection — "
+                  "appending reference at end automatically.")
+            indices.append(0)
+            parities.append(0)
+
         freq_list, slope_list, parity_list, baseline_list = (
             qdm.format_multi_point_frequencies(
                 inflection_points=inflection_points,
                 inflection_slopes=inflection_slopes,
-                indices=state.mag_selected_indices,
-                parities=state.mag_selected_parities,
+                indices=indices,
+                parities=parities,
                 ref_freq=state.sweep_ref_freq_ghz,
                 inflection_contrasts=inflection_contrasts,
             )

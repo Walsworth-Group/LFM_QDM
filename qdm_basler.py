@@ -29,6 +29,7 @@ class basler:
 
         self._device_info = None
         self._camera = None
+        self._continuous_grab_active = False  # True when grabbing with LatestImageOnly
 
     def _log(self, msg: str, *, stderr: bool = False):
         if not self._verbose:
@@ -78,6 +79,7 @@ class basler:
             self._log("Camera closed.")
             self._camera = None
             self._device_info = None
+            self._continuous_grab_active = False
 
     def grab_frames(self, n_frames=100, quiet: bool = True):
         """
@@ -131,6 +133,40 @@ class basler:
         grab_frames() will restart grabbing automatically on the next call."""
         if self._camera and self._camera.IsGrabbing():
             self._camera.StopGrabbing()
+            self._continuous_grab_active = False
+
+    def start_continuous_grab(self):
+        """Switch to continuous LatestImageOnly grabbing for ODMR sweep measurements.
+
+        Stops any existing grabbing session (if not already in continuous mode) and
+        restarts with ``GrabStrategy_LatestImageOnly``.  In this mode the camera runs
+        continuously; each ``RetrieveResult`` call returns the latest available frame,
+        and the single-slot buffer is overwritten within one frame period whenever the
+        MW frequency changes.
+
+        This eliminates the per-step ``StopGrabbing``/``StartGrabbing`` overhead that
+        would occur with ``flush_buffer`` + ``grab_frames``.  The settling sleep in
+        ``measure_odmr_point`` / ``measure_multi_point`` is sufficient to clear stale
+        frames: since ``LatestImageOnly`` keeps only 1 buffer slot, any frame from the
+        previous frequency is overwritten within one frame period (≪ settling time).
+
+        Idempotent — subsequent calls are no-ops once continuous mode is active.
+        The flag is reset by ``flush_buffer()`` and ``close()``.
+
+        Notes
+        -----
+        Assumes ``settling_time`` > one camera frame period.  At 600 µs exposure and
+        typical USB transport overhead this is satisfied for settling times ≥ 2 ms.
+        """
+        if not self.is_connected():
+            return
+        if self._continuous_grab_active:
+            return  # already in LatestImageOnly mode — no-op
+        cam = self._camera
+        if cam.IsGrabbing():
+            cam.StopGrabbing()
+        cam.StartGrabbing(pylon.GrabStrategy_LatestImageOnly, pylon.GrabLoop_ProvidedByUser)
+        self._continuous_grab_active = True
 
     # ---------------- private helpers ----------------
 

@@ -241,10 +241,12 @@ class ODMRMainWindow(QMainWindow):
         # Button clicks
         ui.rf_connect_btn.clicked.connect(self._on_rf_connect_clicked)
         ui.rf_set_btn.clicked.connect(self._on_rf_set_freq)
+        ui.rf_set_amp_btn.clicked.connect(self._on_rf_set_amp)
 
         # State → UI
         self.state.rf_connection_changed.connect(self._on_rf_connection_changed)
         self.state.rf_frequency_changed.connect(self._on_rf_frequency_changed)
+        self.state.rf_amplitude_changed.connect(self._on_rf_amplitude_changed)
         self.state.sweep_running_changed.connect(self._on_sweep_running_changed)
         self.state.mag_running_changed.connect(self._on_mag_running_changed)
 
@@ -278,6 +280,9 @@ class ODMRMainWindow(QMainWindow):
             self.sg384_worker.frequency_polled.connect(
                 lambda freq: setattr(self.state, 'rf_current_freq_ghz', freq)
             )
+            self.sg384_worker.parameter_set_success.connect(
+                self._on_parameter_set_success
+            )
             self.sg384_worker.start()
 
         except Exception as exc:
@@ -307,6 +312,12 @@ class ODMRMainWindow(QMainWindow):
         """Handle SG384Worker connected signal."""
         freq = info.get('freq_ghz', 0.0)
         self.state.rf_current_freq_ghz = freq
+
+        amp = info.get('amp_dbm')
+        if amp is not None:
+            self.state.rf_amplitude_dbm = amp
+            self.ui.rf_amp_spinbox.setValue(amp)
+
         self.statusBar().showMessage(
             f"RF connected: {info.get('address', '')}  ({freq:.6f} GHz)"
         )
@@ -330,15 +341,23 @@ class ODMRMainWindow(QMainWindow):
             ui.rf_connect_btn.setText("Connect RF")
             ui.rf_status_label.setText("\u25cf Disconnected")
             ui.rf_status_label.setStyleSheet("color: red;")
+            ui.rf_amp_label.setText("Amp: \u2014 dBm")
 
         busy = self._is_busy()
         ui.rf_set_btn.setEnabled(connected and not busy)
         ui.rf_freq_spinbox.setEnabled(connected and not busy)
+        ui.rf_set_amp_btn.setEnabled(connected and not busy)
+        ui.rf_amp_spinbox.setEnabled(connected and not busy)
 
     @Slot(float)
     def _on_rf_frequency_changed(self, freq_ghz):
         """Update frequency label when RF frequency changes."""
         self.ui.rf_freq_label.setText(f"Freq: {freq_ghz:.6f} GHz")
+
+    @Slot(float)
+    def _on_rf_amplitude_changed(self, amp_dbm):
+        """Update amplitude label when RF amplitude changes."""
+        self.ui.rf_amp_label.setText(f"Amp: {amp_dbm:.1f} dBm")
 
     @Slot()
     def _on_rf_set_freq(self):
@@ -348,19 +367,39 @@ class ODMRMainWindow(QMainWindow):
         freq_ghz = self.ui.rf_freq_spinbox.value()
         self.sg384_worker.queue_command('set_frequency', freq_ghz)
 
+    @Slot()
+    def _on_rf_set_amp(self):
+        """Queue a set_amplitude command to the SG384 worker."""
+        if self.sg384_worker is None or not self.sg384_worker.isRunning():
+            return
+        dbm = self.ui.rf_amp_spinbox.value()
+        self.sg384_worker.queue_command('set_amplitude', dbm)
+
+    @Slot(str, object)
+    def _on_parameter_set_success(self, command: str, value):
+        """Update state and UI when a hardware parameter command succeeds."""
+        if command == 'set_amplitude':
+            self.state.rf_amplitude_dbm = float(value)
+
     @Slot(bool)
     def _on_sweep_running_changed(self, running):
         """Disable RF controls while a sweep is running."""
         connected = self.state.rf_is_connected
-        self.ui.rf_set_btn.setEnabled(connected and not running and not self.state.mag_is_running)
-        self.ui.rf_freq_spinbox.setEnabled(connected and not running and not self.state.mag_is_running)
+        busy = running or self.state.mag_is_running
+        self.ui.rf_set_btn.setEnabled(connected and not busy)
+        self.ui.rf_freq_spinbox.setEnabled(connected and not busy)
+        self.ui.rf_set_amp_btn.setEnabled(connected and not busy)
+        self.ui.rf_amp_spinbox.setEnabled(connected and not busy)
 
     @Slot(bool)
     def _on_mag_running_changed(self, running):
-        """Disable RF set button while magnetometry is running."""
+        """Disable RF controls while magnetometry is running."""
         connected = self.state.rf_is_connected
-        self.ui.rf_set_btn.setEnabled(connected and not running and not self.state.sweep_is_running)
-        self.ui.rf_freq_spinbox.setEnabled(connected and not running and not self.state.sweep_is_running)
+        busy = running or self.state.sweep_is_running
+        self.ui.rf_set_btn.setEnabled(connected and not busy)
+        self.ui.rf_freq_spinbox.setEnabled(connected and not busy)
+        self.ui.rf_set_amp_btn.setEnabled(connected and not busy)
+        self.ui.rf_amp_spinbox.setEnabled(connected and not busy)
 
     def _is_busy(self):
         """Return True if any acquisition is in progress."""
@@ -604,6 +643,7 @@ class ODMRMainWindow(QMainWindow):
 
         # RF panel
         ui.rf_freq_spinbox.setValue(self.state.rf_current_freq_ghz)
+        ui.rf_amp_spinbox.setValue(self.state.rf_amplitude_dbm)
 
     # ======================================================================
     # Close event
