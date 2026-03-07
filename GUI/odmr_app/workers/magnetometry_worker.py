@@ -306,18 +306,14 @@ class MagnetometryWorker(QThread):
             return {'ny': 10, 'nx': 10}
 
         state = self.state
-        from qdm_basler import basler  # noqa: PLC0415
+        from qdm_pco import pco_camera as basler  # noqa: PLC0415
         camera_instance = basler.connect_and_open(
             choice=state.odmr_camera_serial,
             exposure_time_us=state.mag_exposure_time_us,
             verbose=False,
         )
         # Apply hardware binning before grabbing the first frame
-        _cam = camera_instance._camera
-        _cam.BinningHorizontal.SetValue(state.mag_hw_bin_x)
-        _cam.BinningVertical.SetValue(state.mag_hw_bin_y)
-        _cam.BinningHorizontalMode.SetValue("Average")
-        _cam.BinningVerticalMode.SetValue("Average")
+        camera_instance.set_binning(state.mag_hw_bin_x, state.mag_hw_bin_y)
 
         test_frame = camera_instance.grab_frames(n_frames=1, quiet=True)
         ny, nx = test_frame.shape

@@ -38,7 +38,7 @@ FAIL = "\033[91mFAIL\033[0m"
 
 
 def run_tests(bin_factor: int, serial: str, exposure_us: int):
-    from qdm_basler import basler
+    from qdm_pco import pco_camera as basler
 
     NATIVE_NX = 1920
     NATIVE_NY = 1200

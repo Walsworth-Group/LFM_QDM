@@ -260,7 +260,7 @@ class ODMRSweepWorker(QThread):
                 # Open a dedicated camera connection for the sweep.
                 # Camera streaming has already been stopped by the tab handler
                 # before this worker is started.
-                from qdm_basler import basler  # noqa: PLC0415
+                from qdm_pco import pco_camera as basler  # noqa: PLC0415
                 settings = self._build_settings(1, 1)   # sim shape unused in hw mode
                 cam_cfg = settings['camera']
                 camera_instance = basler.connect_and_open(
@@ -269,11 +269,7 @@ class ODMRSweepWorker(QThread):
                     verbose=False,
                 )
                 # Apply hardware binning (must be done before grabbing frames)
-                _cam = camera_instance._camera
-                _cam.BinningHorizontal.SetValue(cam_cfg['bin_x'])
-                _cam.BinningVertical.SetValue(cam_cfg['bin_y'])
-                _cam.BinningHorizontalMode.SetValue("Average")
-                _cam.BinningVerticalMode.SetValue("Average")
+                camera_instance.set_binning(cam_cfg['bin_x'], cam_cfg['bin_y'])
                 test_frame = camera_instance.grab_frames(n_frames=1, quiet=True)
                 ny, nx = test_frame.shape
                 settings = self._build_settings(ny, nx)

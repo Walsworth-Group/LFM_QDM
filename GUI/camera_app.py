@@ -35,7 +35,7 @@ from workers.camera_worker import CameraWorker
 from workers.camera_consumer import CameraConsumer
 
 # Configuration file path
-CONFIG_FILE = Path(__file__).parent / "config" / "basler_camera_config.json"
+CONFIG_FILE = Path(__file__).parent / "config" / "pco_camera_config.json"
 
 
 class CameraTabWidget(QWidget):
@@ -320,7 +320,7 @@ class CameraTabWidget(QWidget):
 
         layout.addWidget(QLabel("Pixel Format:"), row, 2)
         self.pixel_format_combo = QComboBox()
-        self.pixel_format_combo.addItems(['Mono8', 'Mono12', 'Mono12p'])
+        self.pixel_format_combo.addItems(['Mono16'])  # PCO edge always outputs 16-bit
         self.pixel_format_combo.setCurrentText(self.state.camera_pixel_format)
         self.pixel_format_combo.currentTextChanged.connect(self.on_pixel_format_changed)
         layout.addWidget(self.pixel_format_combo, row, 3)
@@ -1047,7 +1047,7 @@ class BaslerCameraApp(QMainWindow):
 
     def __init__(self, state=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Basler Camera Streaming")
+        self.setWindowTitle("PCO Camera Streaming")
         self.setGeometry(100, 100, 1200, 575)
         self._camera_widget = CameraTabWidget(state=state, parent=self)
         self.setCentralWidget(self._camera_widget)

@@ -6,7 +6,7 @@ import scipy
 from scipy.signal import find_peaks
 from scipy.ndimage import zoom
 import time
-from qdm_basler import basler
+from qdm_pco import pco_camera as basler
 from qdm_srs import SG384Controller
 
 import os
@@ -263,11 +263,7 @@ def initialize_system(simulation_mode, settings, logger=None):
         )
 
         # Apply Binning
-        cam = camera_instance._camera
-        cam.BinningHorizontal.SetValue(cam_cfg['bin_x'])
-        cam.BinningVertical.SetValue(cam_cfg['bin_y'])
-        cam.BinningHorizontalMode.SetValue("Average") # "Sum" is also an option, but could more easily saturate
-        cam.BinningVerticalMode.SetValue("Average")
+        camera_instance.set_binning(cam_cfg['bin_x'], cam_cfg['bin_y'])
         
         # Determine Dimensions
         test_frame = camera_instance.grab_frames(n_frames=1, quiet=True)
