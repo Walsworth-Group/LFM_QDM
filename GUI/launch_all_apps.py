@@ -40,6 +40,7 @@ class AppLauncher:
         self.pid_control_app = None
         self.camera_app = None
         self.odmr_app = None
+        self.lfm_app = None
 
     def launch_laser_power_monitor(self, x=50, y=50):
         """Launch laser power monitoring app with shared state."""
@@ -75,6 +76,17 @@ class AppLauncher:
         self.odmr_app.setGeometry(x, y, 1600, 1000)
         self.odmr_app.show()
         print("[Launcher] ODMR App launched")
+
+    def launch_lfm_app(self, x=100, y=50):
+        """Launch LFM microscopy app."""
+        gui_root = str(Path(__file__).parent)
+        if gui_root not in sys.path:
+            sys.path.insert(0, gui_root)
+        from lfm_app.lfm_app import main as lfm_main
+        self.lfm_app = lfm_main(shared_state=self.shared_state)
+        self.lfm_app.setGeometry(x, y, 1600, 1000)
+        self.lfm_app.show()
+        print("[Launcher] LFM App launched")
 
     def connect_apps(self):
         """

@@ -1,0 +1,18 @@
+{
+  "config_yaml_path": "C:/Users/Walsworthlab/Documents/LFM software/pyolaf-main/examples/fly-muscles-GFP/config.yaml",
+  "white_image_path": "C:/Users/Walsworthlab/Documents/LFM software/pyolaf-main/examples/fly-muscles-GFP/calib.tif",
+  "depth_range_min": -300.0,
+  "depth_range_max": 300.0,
+  "depth_step": 150.0,
+  "new_spacing_px": 15,
+  "super_res_factor": 5,
+  "lanczos_window_size": 4,
+  "filter_flag": true,
+  "num_iterations": 1,
+  "lfm_camera_serial": "",
+  "display_colormap": "viridis",
+  "display_auto_levels": true,
+  "save_base_path": "",
+  "save_subfolder": "lfm_data",
+  "save_timestamp_enabled": true
+}
