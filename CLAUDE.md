@@ -166,13 +166,13 @@ Key cell groups (by markdown headers / cell IDs):
   - Cell 38: Reanalyze field map with different denoising
 
 ## GUI directory structure (/GUI/)
-Four PySide6 + pyqtgraph apps for instrument control.
+Five PySide6 + pyqtgraph apps for instrument control.
 
 ### App entry points (GUI root)
 * `pid_control_app.py` — SRS SIM960 PID controller GUI
 * `laser_power_app.py` — NI-DAQ laser power monitor GUI
 * `camera_app.py` — Basler camera streaming GUI
-* `launch_all_apps.py` — Launches the three instrument apps in one QApplication with shared state
+* `launch_all_apps.py` — Launches the instrument apps + ODMR + LFM in one QApplication with shared state
 * `simple_app.py` — Minimal example/sandbox app
 
 ### ODMR magnetometry GUI (odmr_app/)
@@ -186,6 +186,24 @@ Key structure:
 * `odmr_app/ui/` — Qt Designer `.ui` source files + generated `ui_*.py` files
 * `odmr_app/config/` — `odmr_app_config.json` (auto-saved) + `presets/` folder
 * `odmr_app/tests/` — 50 pytest tests (run with `python -m pytest GUI/odmr_app/tests/`)
+
+### LFM microscopy GUI (lfm_app/)
+The light field microscopy GUI lives in `GUI/lfm_app/`. Run with `python GUI/lfm_app/lfm_app.py` or via launchers. It provides the full LFM workflow in 5 tabs: Camera, Calibration, Reconstruction, Volume Viewer, Settings. See `GUI/lfm_app/LFM_APP_README.md` for complete documentation.
+
+Key structure:
+* `lfm_app/state/lfm_state.py` — `LFMAppState`: all signals, properties, config I/O, calibration stage tracking
+* `lfm_app/workers/` — `CalibrationWorker` (pyolaf geometry + PSF pipeline), `ReconstructionWorker` (iterative deconvolution)
+* `lfm_app/tabs/` — `CalibrationTabHandler`, `ReconstructionTabHandler`, `VolumeViewerTabHandler`, `SettingsTabHandler`
+* `lfm_app/widgets/` — `VolumeSlicerWidget` (depth-slice browser with colorbar), `LensletOverlayWidget` (white image + detected centers)
+* `lfm_app/config/` — `lfm_app_config.json` (auto-saved) + `lfm_camera_config.json`
+
+Dependencies:
+* `pyolaf-main/` — LFM reconstruction library (install with `pip install -e pyolaf-main/`)
+* Camera tab is embedded from `GUI/camera_app.py` using sys.modules isolation (same pattern as odmr_app)
+* Optional: CuPy for GPU-accelerated reconstruction
+
+Sample data:
+* `pyolaf-main/examples/fly-muscles-GFP/` — config.yaml, calib.tif, example_fly.tif
 
 ### Instrument helper apps (GUI root + subfolders)
 * `state/` — Qt state objects (QObject + Signal). No internal GUI imports.
